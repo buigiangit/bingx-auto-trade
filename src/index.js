@@ -1,4 +1,3 @@
-```js
 import { CONFIG } from './config.js';
 import { buildMarketSnapshot } from './market.js';
 import { addIndicators } from './indicators.js';
