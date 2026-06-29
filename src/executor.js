@@ -1,4 +1,3 @@
-```js
 import { CONFIG } from './config.js';
 import { fetchSigned } from './bingxClient.js';
 import { getSymbolState, updateSymbolState } from './state.js';
