@@ -32,6 +32,12 @@ dcaTriggerRoePct: Number(process.env.DCA_TRIGGER_ROE_PCT || -20),
 maxDcaCount: Number(process.env.MAX_DCA_COUNT || 1),
 dcaMarginUsdt: Number(process.env.DCA_MARGIN_USDT || 100),
 minSecondsBetweenDca: Number(process.env.MIN_SECONDS_BETWEEN_DCA || 1800),
+  telegramEnabled: process.env.TELEGRAM_ENABLED === 'true',
+  telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || '',
+  telegramChatId: process.env.TELEGRAM_CHAT_ID || '',
+  telegramAlertCooldownSeconds: Number(
+    process.env.TELEGRAM_ALERT_COOLDOWN_SECONDS || 600
+  )
 };
 
 export function assertSafeEnvironment() {
