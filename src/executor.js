@@ -1,4 +1,3 @@
-
 import { CONFIG } from './config.js';
 import { fetchSigned } from './bingxClient.js';
 import {
@@ -6,10 +5,12 @@ import {
   updateSymbolState
 } from './state.js';
 import {
-  sendOrderAttemptToTelegram,
-  updateOrderTelegramStatus
+  sendCommunitySignalToTelegram
 } from './telegram.js';
 
+/**
+ * Chuyển tín hiệu AI thành side dùng cho tài khoản Hedge Mode.
+ */
 function sideFor(signal) {
   if (signal === 'LONG') {
     return {
@@ -28,12 +29,18 @@ function sideFor(signal) {
   throw new Error(`Signal không hợp lệ: ${signal}`);
 }
 
+/**
+ * Tạo clientOrderId riêng cho mỗi request.
+ */
 function clientOrderId(symbol) {
   return `ai-vst-${symbol
     .replace('-', '')
     .toLowerCase()}-${Date.now()}`.slice(0, 40);
 }
 
+/**
+ * Làm tròn giá theo pricePrecision của hợp đồng.
+ */
 function roundPrice(value, precision = 2) {
   const number = Number(value);
 
@@ -46,12 +53,17 @@ function roundPrice(value, precision = 2) {
   return Math.round(number * multiplier) / multiplier;
 }
 
+/**
+ * Tạo tham số TP/SL gửi kèm lệnh MARKET.
+ */
 function buildTpSlParams(decision, snapshot) {
   const signal = decision.signal;
 
   const pricePrecision = Number(
     snapshot?.contract?.pricePrecision ?? 2
   );
+
+  const entry = Number(signal.entry);
 
   const stopLoss = roundPrice(
     signal.stopLoss,
@@ -63,22 +75,27 @@ function buildTpSlParams(decision, snapshot) {
     pricePrecision
   );
 
-  if (
-    !Number.isFinite(stopLoss) ||
-    !Number.isFinite(takeProfit1) ||
-    stopLoss <= 0 ||
-    takeProfit1 <= 0
-  ) {
-    throw new Error(
-      'Không có stopLoss hoặc takeProfit1 hợp lệ để gửi TP/SL'
-    );
-  }
-
-  const entry = Number(signal.entry);
-
   if (!Number.isFinite(entry) || entry <= 0) {
     throw new Error(
       `Entry không hợp lệ: ${signal.entry}`
+    );
+  }
+
+  if (
+    !Number.isFinite(stopLoss) ||
+    stopLoss <= 0
+  ) {
+    throw new Error(
+      `Stop Loss không hợp lệ: ${signal.stopLoss}`
+    );
+  }
+
+  if (
+    !Number.isFinite(takeProfit1) ||
+    takeProfit1 <= 0
+  ) {
+    throw new Error(
+      `Take Profit không hợp lệ: ${signal.takeProfit1}`
     );
   }
 
@@ -90,12 +107,12 @@ function buildTpSlParams(decision, snapshot) {
     if (!validLongStructure) {
       throw new Error(
         `TP/SL LONG sai hướng. ` +
-        `Entry: ${entry}, SL: ${stopLoss}, TP1: ${takeProfit1}`
+        `Entry: ${entry}, ` +
+        `SL: ${stopLoss}, ` +
+        `TP1: ${takeProfit1}`
       );
     }
-  }
-
-  if (signal.signal === 'SHORT') {
+  } else if (signal.signal === 'SHORT') {
     const validShortStructure =
       stopLoss > entry &&
       takeProfit1 < entry;
@@ -103,9 +120,15 @@ function buildTpSlParams(decision, snapshot) {
     if (!validShortStructure) {
       throw new Error(
         `TP/SL SHORT sai hướng. ` +
-        `Entry: ${entry}, SL: ${stopLoss}, TP1: ${takeProfit1}`
+        `Entry: ${entry}, ` +
+        `SL: ${stopLoss}, ` +
+        `TP1: ${takeProfit1}`
       );
     }
+  } else {
+    throw new Error(
+      `Không thể tạo TP/SL cho signal: ${signal.signal}`
+    );
   }
 
   return {
@@ -125,6 +148,9 @@ function buildTpSlParams(decision, snapshot) {
   };
 }
 
+/**
+ * Set leverage theo hướng LONG/SHORT trước khi đặt order.
+ */
 async function setLeverageBeforeOrder(decision) {
   const leverage = Number(
     decision.leverage ||
@@ -199,6 +225,9 @@ async function setLeverageBeforeOrder(decision) {
   return response;
 }
 
+/**
+ * Lấy vị thế hiện đang mở trên BingX.
+ */
 async function getOpenPosition(
   symbol = CONFIG.symbol
 ) {
@@ -308,6 +337,9 @@ async function getOpenPosition(
   };
 }
 
+/**
+ * Kiểm tra tín hiệu hiện tại có cùng hướng vị thế đang mở hay không.
+ */
 function isSameDirection(
   openPosition,
   signal
@@ -333,18 +365,38 @@ function isSameDirection(
   return false;
 }
 
+/**
+ * Tạo decision dành riêng cho DCA.
+ */
 function buildDcaDecision(
   decision,
   openPosition
 ) {
-  const dcaNotional =
-    Number(CONFIG.dcaMarginUsdt) *
-    Number(CONFIG.maxLeverage);
+  const dcaMarginUsdt = Number(
+    CONFIG.dcaMarginUsdt || 0
+  );
 
-  const price =
+  const leverage = Number(
+    CONFIG.maxLeverage || 1
+  );
+
+  const dcaNotional =
+    dcaMarginUsdt * leverage;
+
+  const price = Number(
     openPosition.markPrice ||
     openPosition.avgPrice ||
-    decision.signal.entry;
+    decision.signal.entry
+  );
+
+  if (
+    !Number.isFinite(dcaNotional) ||
+    dcaNotional <= 0
+  ) {
+    throw new Error(
+      `DCA notional không hợp lệ: ${dcaNotional}`
+    );
+  }
 
   if (
     !Number.isFinite(price) ||
@@ -374,6 +426,7 @@ function buildDcaDecision(
     isDca: true,
     quantity,
     notional: dcaNotional,
+    marginUsed: dcaMarginUsdt,
 
     signal: {
       ...decision.signal,
@@ -388,6 +441,9 @@ function buildDcaDecision(
   };
 }
 
+/**
+ * Kiểm tra vị thế và điều kiện DCA.
+ */
 async function checkPositionAndDcaGuard(
   decision
 ) {
@@ -525,6 +581,9 @@ async function checkPositionAndDcaGuard(
   };
 }
 
+/**
+ * Kết quả khi không gửi order.
+ */
 function createNotExecutedResult(
   reason,
   extra = {}
@@ -538,44 +597,59 @@ function createNotExecutedResult(
   };
 }
 
-async function safelyUpdateTelegram(
-  messageId,
+/**
+ * Gửi call Telegram dành cho cộng đồng.
+ *
+ * Hàm này luôn tự bắt lỗi để Telegram lỗi
+ * không làm dừng luồng gửi BingX.
+ */
+function startCommunityTelegram(
   decision,
-  snapshot,
-  state,
-  order = null,
-  errorMessage = ''
+  snapshot
 ) {
-  if (!messageId) {
-    return;
-  }
+  return sendCommunitySignalToTelegram(
+    decision,
+    snapshot
+  )
+    .then(result => {
+      console.log(
+        'Telegram community:',
+        result
+      );
 
-  try {
-    await updateOrderTelegramStatus(
-      messageId,
-      decision,
-      snapshot,
-      state,
-      order,
-      errorMessage
-    );
-  } catch (error) {
-    console.error(
-      'Telegram cập nhật trạng thái lỗi:',
-      error.response?.data ||
-      error.message
-    );
-  }
+      return result;
+    })
+    .catch(error => {
+      const errorMessage =
+        error.response?.data?.description ||
+        error.response?.data ||
+        error.message ||
+        String(error);
+
+      console.error(
+        'Telegram gửi call lỗi:',
+        errorMessage
+      );
+
+      return {
+        sent: false,
+        messageId: null,
+        error: errorMessage
+      };
+    });
 }
 
+/**
+ * Hàm xử lý chính.
+ */
 export async function executeDecision(
   decision,
   snapshot,
   allowVstOrder
 ) {
   /*
-   * AI hoặc risk filter chưa duyệt:
-   * không gửi BingX và không gửi Telegram.
+   * AI/risk filter chưa duyệt:
+   * không gửi Telegram, không gửi BingX.
    */
   if (!decision.approved) {
     return createNotExecutedResult(
@@ -586,8 +660,7 @@ export async function executeDecision(
   }
 
   /*
-   * SIGNAL_ONLY:
-   * chỉ phân tích, không gửi order.
+   * Chỉ phân tích tín hiệu.
    */
   if (
     CONFIG.executionMode === 'SIGNAL_ONLY'
@@ -598,7 +671,7 @@ export async function executeDecision(
   }
 
   /*
-   * Kiểm tra vị thế và điều kiện DCA.
+   * Kiểm tra vị thế hiện tại và điều kiện DCA.
    */
   const guard =
     await checkPositionAndDcaGuard(decision);
@@ -624,8 +697,8 @@ export async function executeDecision(
   }
 
   /*
-   * TEST_ORDER không tạo vị thế.
-   * Không gửi Telegram call lệnh.
+   * TEST_ORDER:
+   * không gửi call Telegram cộng đồng.
    */
   if (
     CONFIG.executionMode === 'TEST_ORDER'
@@ -700,7 +773,9 @@ export async function executeDecision(
 
   /*
    * VST_ORDER:
-   * Telegram và BingX bắt đầu gần như đồng thời.
+   * - Telegram đăng call cho cộng đồng.
+   * - BingX xử lý order riêng.
+   * - BingX thành công/lỗi không sửa tin Telegram.
    */
   if (
     CONFIG.executionMode === 'VST_ORDER'
@@ -718,8 +793,21 @@ export async function executeDecision(
     }
 
     /*
-     * Tạo side, TP/SL trước.
-     * Nếu dữ liệu không hợp lệ thì chưa gửi Telegram/BingX.
+     * Bắt đầu gửi Telegram ngay khi guard đã cho phép.
+     *
+     * Không chờ set leverage hoặc BingX trả kết quả.
+     */
+    const telegramPromise =
+      startCommunityTelegram(
+        decision,
+        snapshot
+      );
+
+    /*
+     * Tạo thông tin order BingX.
+     *
+     * Nếu đoạn này lỗi thì Telegram vẫn đã được gửi,
+     * nhưng lỗi BingX chỉ hiển thị trong log.
      */
     const sideInfo = sideFor(
       decision.signal.signal
@@ -731,7 +819,7 @@ export async function executeDecision(
     );
 
     /*
-     * Set leverage trước khi bắt đầu gửi order.
+     * Set leverage trước khi gửi order BingX.
      */
     await setLeverageBeforeOrder(decision);
 
@@ -758,92 +846,47 @@ export async function executeDecision(
     );
 
     /*
-     * Khởi chạy Telegram và BingX cùng lúc.
+     * Gửi order BingX.
      *
-     * Telegram sẽ gửi:
-     * "ĐANG GỬI LỆNH" hoặc "ĐANG GỬI DCA".
-     *
-     * BingX đồng thời nhận request order.
+     * Telegram đang chạy độc lập ở telegramPromise.
      */
-    const telegramPromise =
-      sendOrderAttemptToTelegram(
-        decision,
-        snapshot
-      ).catch(error => {
-        console.error(
-          'Telegram gửi ban đầu lỗi:',
-          error.response?.data ||
-          error.message
-        );
+    let response;
 
-        return {
-          sent: false,
-          messageId: null,
-          error:
-            error.response?.data ||
-            error.message
-        };
-      });
+    try {
+      response = await fetchSigned(
+        'POST',
+        '/openApi/swap/v2/trade/order',
+        params
+      );
+    } catch (error) {
+      /*
+       * Đảm bảo Telegram promise được xử lý,
+       * nhưng không thay đổi/xóa tin Telegram.
+       */
+      const telegramResult =
+        await telegramPromise;
 
-    const bingxPromise = fetchSigned(
-      'POST',
-      '/openApi/swap/v2/trade/order',
-      params
-    );
-
-    const [
-      telegramSettled,
-      bingxSettled
-    ] = await Promise.allSettled([
-      telegramPromise,
-      bingxPromise
-    ]);
-
-    const telegramResult =
-      telegramSettled.status === 'fulfilled'
-        ? telegramSettled.value
-        : {
-            sent: false,
-            messageId: null
-          };
-
-    const telegramMessageId =
-      telegramResult?.messageId || null;
-
-    /*
-     * BingX request bị reject:
-     * cập nhật Telegram thành thất bại.
-     */
-    if (
-      bingxSettled.status === 'rejected'
-    ) {
-      const errorMessage =
-        bingxSettled.reason?.response
-          ?.data?.msg ||
-        bingxSettled.reason?.response
-          ?.data?.message ||
-        bingxSettled.reason?.response
-          ?.data ||
-        bingxSettled.reason?.message ||
-        String(bingxSettled.reason);
-
-      await safelyUpdateTelegram(
-        telegramMessageId,
-        decision,
-        snapshot,
-        'FAILED',
-        null,
-        String(errorMessage)
+      console.error(
+        'BingX gửi order lỗi:',
+        error.response?.data ||
+        error.message ||
+        String(error)
       );
 
-      throw bingxSettled.reason;
+      console.log(
+        'Telegram vẫn giữ nguyên:',
+        telegramResult
+      );
+
+      throw error;
     }
 
     /*
-     * BingX đã trả response.
+     * Lấy kết quả Telegram.
+     * Tin Telegram không phụ thuộc response BingX.
      */
-    const response =
-      bingxSettled.value;
+    const telegramResult =
+      await telegramPromise;
 
     console.log(
       'VST_ORDER response:',
@@ -855,32 +898,27 @@ export async function executeDecision(
       response?.code !== 0 &&
       response?.code !== '0';
 
-    /*
-     * BingX trả code lỗi:
-     * sửa Telegram thành "BỊ TỪ CHỐI".
-     */
     if (hasApiError) {
-      const errorMessage =
+      const bingxError =
         response?.msg ||
         response?.message ||
         JSON.stringify(response);
 
-      await safelyUpdateTelegram(
-        telegramMessageId,
-        decision,
-        snapshot,
-        'FAILED',
-        null,
-        errorMessage
+      console.error(
+        'BingX từ chối order:',
+        bingxError
       );
 
+      /*
+       * Không sửa tin Telegram.
+       */
       throw new Error(
-        `Gửi VST_ORDER lỗi: ${errorMessage}`
+        `Gửi VST_ORDER lỗi: ${bingxError}`
       );
     }
 
     /*
-     * Parse dữ liệu order.
+     * Parse response order BingX.
      */
     const order =
       response?.order ||
@@ -899,25 +937,11 @@ export async function executeDecision(
       order?.status ||
       null;
 
-    /*
-     * Không xác nhận được order:
-     * Telegram chuyển thành thất bại.
-     */
     if (!orderId && !status) {
-      const errorMessage =
+      throw new Error(
         `Không xác nhận được order response: ` +
-        `${JSON.stringify(response)}`;
-
-      await safelyUpdateTelegram(
-        telegramMessageId,
-        decision,
-        snapshot,
-        'FAILED',
-        null,
-        errorMessage
+        `${JSON.stringify(response)}`
       );
-
-      throw new Error(errorMessage);
     }
 
     const executedQuantity = Number(
@@ -940,18 +964,6 @@ export async function executeDecision(
         ? executedQuantity *
           executedEntry
         : Number(decision.notional);
-
-    /*
-     * BingX thành công:
-     * sửa Telegram từ ĐANG GỬI thành THÀNH CÔNG.
-     */
-    await safelyUpdateTelegram(
-      telegramMessageId,
-      decision,
-      snapshot,
-      'SUCCESS',
-      order
-    );
 
     console.log('Order OK:', {
       orderId,
@@ -986,11 +998,12 @@ export async function executeDecision(
       isDca:
         Boolean(decision.isDca),
 
-      telegramMessageId
+      telegram:
+        telegramResult
     });
 
     /*
-     * Lưu state sau khi BingX xác nhận order.
+     * Lưu state sau khi BingX xác nhận order thành công.
      */
     const currentState =
       getSymbolState(CONFIG.symbol);
@@ -1047,6 +1060,7 @@ export async function executeDecision(
 
     return {
       executed: true,
+
       isDca:
         Boolean(decision.isDca),
 
@@ -1121,13 +1135,13 @@ export async function executeDecision(
           telegramResult?.sent === true,
 
         messageId:
-          telegramMessageId
+          telegramResult?.messageId || null
       },
 
       message:
         decision.isDca
-          ? 'Đã gửi lệnh DCA lên BingX và cập nhật Telegram.'
-          : 'Đã gửi lệnh mới lên BingX và cập nhật Telegram.'
+          ? 'Đã đăng call DCA lên Telegram và xử lý order BingX.'
+          : 'Đã đăng call lên Telegram và xử lý order BingX.'
     };
   }
 
