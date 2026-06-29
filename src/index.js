@@ -5,7 +5,6 @@ import { askAI } from './ai.js';
 import { validateAndSize } from './risk.js';
 import { executeDecision } from './executor.js';
 import { logJson } from './logger.js';
-import { sendExecutedOrderToTelegram } from './telegram.js';
 
 const args = new Set(process.argv.slice(2));
 
@@ -60,38 +59,6 @@ async function runOne() {
     sent: false,
     reason: 'Order chưa được gửi thành công lên BingX'
   };
-
-  if (execution?.executed === true) {
-    try {
-      telegramResult =
-        await sendExecutedOrderToTelegram(
-          execution,
-          decision,
-          snapshot
-        );
-
-      console.log(
-        'Telegram:',
-        telegramResult
-      );
-    } catch (error) {
-      telegramResult = {
-        sent: false,
-        reason:
-          error.response?.data?.description ||
-          error.response?.data ||
-          error.message
-      };
-
-      /*
-       * Telegram lỗi không được làm bot dừng.
-       * Lệnh BingX đã gửi rồi nên chỉ ghi log lỗi Telegram.
-       */
-      console.error(
-        'Telegram lỗi:',
-        telegramResult.reason
-      );
-    }
   }
 
   const report = {
