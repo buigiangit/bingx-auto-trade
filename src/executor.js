@@ -922,4 +922,3 @@ export async function executeDecision(
     `${CONFIG.executionMode}`
   );
 }
-```
