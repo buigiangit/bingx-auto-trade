@@ -359,4 +359,3 @@ if (args.has('--once')) {
 } else {
   await startLoop();
 }
-```
