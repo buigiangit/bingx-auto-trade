@@ -20,82 +20,138 @@ function formatNumber(value, digits = 4) {
   });
 }
 
-export async function sendExecutedOrderToTelegram(
-  execution,
+function getTelegramUrl(method) {
+  return (
+    `https://api.telegram.org/bot` +
+    `${CONFIG.telegramBotToken}/${method}`
+  );
+}
+
+function buildOrderMessage(
   decision,
-  snapshot
+  snapshot,
+  state,
+  order = null,
+  errorMessage = ''
 ) {
-  if (!CONFIG.telegramEnabled) {
-    return {
-      sent: false,
-      reason: 'Telegram đang tắt'
-    };
+  const signal = decision.signal;
+  const isDca = decision.isDca === true;
+
+  const icon =
+    signal.signal === 'LONG'
+      ? '🔵'
+      : '🔴';
+
+  let title;
+
+  if (state === 'SENDING') {
+    title = isDca
+      ? `⏳ ${icon} <b>ĐANG GỬI DCA ${escapeHtml(signal.signal)}</b>`
+      : `⏳ ${icon} <b>ĐANG GỬI LỆNH ${escapeHtml(signal.signal)}</b>`;
+  } else if (state === 'SUCCESS') {
+    title = isDca
+      ? `✅ ${icon} <b>ĐÃ GỬI DCA ${escapeHtml(signal.signal)}</b>`
+      : `✅ ${icon} <b>ĐÃ GỬI LỆNH ${escapeHtml(signal.signal)}</b>`;
+  } else {
+    title = isDca
+      ? `❌ ${icon} <b>DCA ${escapeHtml(signal.signal)} BỊ TỪ CHỐI</b>`
+      : `❌ ${icon} <b>LỆNH ${escapeHtml(signal.signal)} BỊ TỪ CHỐI</b>`;
   }
-
-  if (!execution?.executed) {
-    return {
-      sent: false,
-      reason: 'Order chưa được gửi thành công lên BingX'
-    };
-  }
-
-  if (!CONFIG.telegramBotToken || !CONFIG.telegramChatId) {
-    throw new Error(
-      'Thiếu TELEGRAM_BOT_TOKEN hoặc TELEGRAM_CHAT_ID'
-    );
-  }
-
-  const signal = execution.signal;
-  const isDca = execution.isDca === true;
-
-  const icon = signal === 'LONG' ? '🔵' : '🔴';
-
-  const title = isDca
-    ? `${icon} <b>ĐÃ DCA ${escapeHtml(signal)}</b>`
-    : `${icon} <b>ĐÃ VÀO LỆNH ${escapeHtml(signal)}</b>`;
 
   const funding =
     snapshot?.premium?.lastFundingRate ??
     snapshot?.funding?.fundingRate ??
     0;
 
-  const indicators = snapshot?.indicators || {};
+  const executedEntry = Number(
+    order?.avgPrice ??
+    order?.price ??
+    signal.entry
+  );
 
-  const text = [
+  const executedQuantity = Number(
+    order?.executedQty ??
+    order?.quantity ??
+    decision.quantity
+  );
+
+  const lines = [
     title,
     '',
-    `📌 <b>Symbol:</b> ${escapeHtml(execution.symbol)}`,
+    `📌 <b>Symbol:</b> ${escapeHtml(CONFIG.symbol)}`,
     `⏱ <b>Khung:</b> ${escapeHtml(CONFIG.interval)}`,
-    `🆔 <b>Order ID:</b> ${escapeHtml(execution.orderId || 'N/A')}`,
-    `📋 <b>Trạng thái:</b> ${escapeHtml(execution.status || 'N/A')}`,
+    `📊 <b>Loại:</b> ${isDca ? 'DCA' : 'Entry mới'}`,
     '',
-    `📍 <b>Entry khớp:</b> ${formatNumber(execution.entry, 8)}`,
-    `🛑 <b>Stop Loss:</b> ${formatNumber(execution.stopLoss, 8)}`,
-    `✅ <b>TP1:</b> ${formatNumber(execution.takeProfit1, 8)}`,
-    `✅ <b>TP2:</b> ${formatNumber(execution.takeProfit2, 8)}`,
+    `📍 <b>Entry:</b> ${formatNumber(executedEntry, 8)}`,
+    `🛑 <b>Stop Loss:</b> ${formatNumber(signal.stopLoss, 8)}`,
+    `✅ <b>TP1:</b> ${formatNumber(signal.takeProfit1, 8)}`,
+    `✅ <b>TP2:</b> ${formatNumber(signal.takeProfit2, 8)}`,
     '',
-    `📦 <b>Quantity:</b> ${formatNumber(execution.quantity, 8)}`,
-    `💵 <b>Notional:</b> ${formatNumber(execution.notional, 2)} USDT`,
-    `⚡ <b>Leverage:</b> x${formatNumber(execution.leverage, 0)}`,
+    `📦 <b>Quantity:</b> ${formatNumber(executedQuantity, 8)}`,
+    `💵 <b>Notional:</b> ${formatNumber(decision.notional, 2)} USDT`,
+    `⚡ <b>Leverage:</b> x${formatNumber(
+      decision.leverage ?? CONFIG.maxLeverage,
+      0
+    )}`,
     `⚖️ <b>RR:</b> ${formatNumber(decision.rr, 2)}`,
-    '',
-    `📊 <b>Trend:</b> ${escapeHtml(indicators.trend || 'N/A')}`,
-    `📈 <b>RSI:</b> ${formatNumber(indicators.rsi14 ?? indicators.rsi, 2)}`,
+    `🎯 <b>Confidence:</b> ${formatNumber(signal.confidence, 2)}%`,
     `💰 <b>Funding:</b> ${formatNumber(Number(funding) * 100, 5)}%`,
     '',
-    `🧠 <b>Lý do:</b> ${escapeHtml(decision.signal?.reason || '')}`,
-    `⚠️ <b>Lưu ý:</b> ${escapeHtml(decision.signal?.riskNote || '')}`,
-    '',
-    isDca
-      ? '<i>Lệnh DCA đã được gửi thành công lên BingX.</i>'
-      : '<i>Lệnh đã được gửi thành công lên BingX.</i>'
-  ].join('\n');
+    `🧠 <b>Lý do:</b> ${escapeHtml(signal.reason || '')}`,
+    `⚠️ <b>Lưu ý:</b> ${escapeHtml(signal.riskNote || '')}`
+  ];
 
-  const url =
-    `https://api.telegram.org/bot${CONFIG.telegramBotToken}/sendMessage`;
+  if (state === 'SUCCESS') {
+    lines.push(
+      '',
+      `🆔 <b>Order ID:</b> ${escapeHtml(
+        order?.orderId ??
+        order?.orderID ??
+        order?.clientOrderId ??
+        'N/A'
+      )}`,
+      `📋 <b>Trạng thái:</b> ${escapeHtml(order?.status || 'SUCCESS')}`
+    );
+  }
+
+  if (state === 'FAILED') {
+    lines.push(
+      '',
+      `❗ <b>Lỗi:</b> ${escapeHtml(errorMessage || 'BingX từ chối lệnh')}`
+    );
+  }
+
+  return lines.join('\n');
+}
+
+export async function sendOrderAttemptToTelegram(
+  decision,
+  snapshot
+) {
+  if (!CONFIG.telegramEnabled) {
+    return {
+      sent: false,
+      reason: 'TELEGRAM_ENABLED=false'
+    };
+  }
+
+  if (
+    !CONFIG.telegramBotToken ||
+    !CONFIG.telegramChatId
+  ) {
+    throw new Error(
+      'Thiếu TELEGRAM_BOT_TOKEN hoặc TELEGRAM_CHAT_ID'
+    );
+  }
+
+  const text = buildOrderMessage(
+    decision,
+    snapshot,
+    'SENDING'
+  );
 
   const response = await axios.post(
-    url,
+    getTelegramUrl('sendMessage'),
     {
       chat_id: CONFIG.telegramChatId,
       text,
@@ -116,5 +172,49 @@ export async function sendExecutedOrderToTelegram(
   return {
     sent: true,
     messageId: response.data.result?.message_id
+  };
+}
+
+export async function updateOrderTelegramStatus(
+  messageId,
+  decision,
+  snapshot,
+  state,
+  order = null,
+  errorMessage = ''
+) {
+  if (
+    !CONFIG.telegramEnabled ||
+    !messageId
+  ) {
+    return {
+      updated: false
+    };
+  }
+
+  const text = buildOrderMessage(
+    decision,
+    snapshot,
+    state,
+    order,
+    errorMessage
+  );
+
+  const response = await axios.post(
+    getTelegramUrl('editMessageText'),
+    {
+      chat_id: CONFIG.telegramChatId,
+      message_id: messageId,
+      text,
+      parse_mode: 'HTML',
+      disable_web_page_preview: true
+    },
+    {
+      timeout: 15000
+    }
+  );
+
+  return {
+    updated: response.data?.ok === true
   };
 }
