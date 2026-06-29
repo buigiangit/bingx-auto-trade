@@ -14,13 +14,10 @@ let isRunning = false;
 let runCount = 0;
 
 /**
- * Chạy một vòng:
- * 1. Lấy dữ liệu BingX
- * 2. Tính chỉ báo
- * 3. Gọi AI
- * 4. Risk filter
- * 5. Gửi order BingX
- * 6. Chỉ khi BingX gửi order thành công mới gửi Telegram
+ * Chạy một vòng phân tích và xử lý lệnh.
+ *
+ * Telegram đã được gửi đồng thời với request BingX
+ * bên trong executor.js, nên index.js không gửi lại.
  */
 async function runOne() {
   const raw = await buildMarketSnapshot();
@@ -34,32 +31,11 @@ async function runOne() {
     snapshot
   );
 
-  /*
-   * executeDecision chỉ trả executed:true
-   * khi BingX đã xác nhận order thành công.
-   *
-   * Bao gồm:
-   * - Lệnh vào mới
-   * - Lệnh DCA
-   */
   const execution = await executeDecision(
     decision,
     snapshot,
     allowVstOrder
   );
-
-  /*
-   * Chỉ gửi Telegram khi:
-   * execution.executed === true
-   *
-   * Nếu AI WAIT, risk filter chặn, chưa đủ DCA,
-   * BingX lỗi hoặc chưa gửi order thì không gửi Telegram.
-   */
-  let telegramResult = {
-    sent: false,
-    reason: 'Order chưa được gửi thành công lên BingX'
-  };
-  }
 
   const report = {
     createdAt: new Date().toISOString(),
@@ -68,22 +44,22 @@ async function runOne() {
     interval: snapshot.interval,
 
     price:
-      snapshot.indicators.lastClose,
+      snapshot.indicators?.lastClose,
 
     trend:
-      snapshot.indicators.trend,
+      snapshot.indicators?.trend,
 
     rsi14:
-      snapshot.indicators.rsi14,
+      snapshot.indicators?.rsi14,
 
     ema34:
-      snapshot.indicators.ema34,
+      snapshot.indicators?.ema34,
 
     ema89:
-      snapshot.indicators.ema89,
+      snapshot.indicators?.ema89,
 
     ema200:
-      snapshot.indicators.ema200,
+      snapshot.indicators?.ema200,
 
     funding:
       decision.funding,
@@ -96,8 +72,7 @@ async function runOne() {
 
     aiSignal,
     decision,
-    execution,
-    telegram: telegramResult
+    execution
   };
 
   console.log('');
@@ -185,12 +160,19 @@ async function runOne() {
     console.log(
       `Order status: ${execution.status || 'N/A'}`
     );
-  }
 
-  console.log(
-    'Telegram:',
-    telegramResult
-  );
+    console.log(
+      `Telegram sent: ${
+        execution.telegram?.sent === true
+      }`
+    );
+
+    console.log(
+      `Telegram message ID: ${
+        execution.telegram?.messageId || 'N/A'
+      }`
+    );
+  }
 
   console.log(
     '========================\n'
@@ -202,10 +184,7 @@ async function runOne() {
 }
 
 /**
- * Chặn chạy chồng vòng.
- *
- * Nếu vòng trước chưa xử lý xong thì vòng mới bỏ qua,
- * tránh gửi trùng order.
+ * Không cho hai vòng chạy chồng lên nhau.
  */
 async function runOnceSafe() {
   if (isRunning) {
@@ -219,35 +198,35 @@ async function runOnceSafe() {
   isRunning = true;
   runCount += 1;
 
-  const startedAt = new Date();
-
   try {
     console.log('');
     console.log('==============================');
     console.log(`RUN #${runCount}`);
 
     console.log(
-      `Time: ${startedAt.toLocaleString('vi-VN')}`
+      `Time: ${new Date().toLocaleString('vi-VN')}`
     );
 
     console.log('==============================');
 
     await runOne();
   } catch (error) {
+    const errorMessage =
+      error.response?.data?.msg ||
+      error.response?.data?.message ||
+      error.response?.data ||
+      error.message ||
+      String(error);
+
     console.error(
       'Bot lỗi:',
-      error.response?.data ||
-      error.message
+      errorMessage
     );
 
     logJson({
       createdAt: new Date().toISOString(),
-      error:
-        error.response?.data ||
-        error.message,
-
-      stack:
-        error.stack
+      error: errorMessage,
+      stack: error.stack
     });
   } finally {
     isRunning = false;
@@ -255,7 +234,7 @@ async function runOnceSafe() {
 }
 
 /**
- * Chạy bot liên tục theo CHECK_INTERVAL_SECONDS.
+ * Chạy bot liên tục.
  */
 async function startLoop() {
   const checkIntervalSeconds = Number(
@@ -301,14 +280,10 @@ async function startLoop() {
     '====================================='
   );
 
-  /*
-   * Chạy ngay vòng đầu, không cần đợi interval.
-   */
+  // Chạy ngay vòng đầu tiên.
   await runOnceSafe();
 
-  /*
-   * Sau đó tự chạy lại theo chu kỳ.
-   */
+  // Sau đó tiếp tục chạy theo chu kỳ.
   setInterval(
     async () => {
       await runOnceSafe();
@@ -317,10 +292,6 @@ async function startLoop() {
   );
 }
 
-/**
- * npm run once hoặc:
- * node src/index.js --once
- */
 if (args.has('--once')) {
   await runOnceSafe();
 } else {
