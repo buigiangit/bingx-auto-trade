@@ -50,7 +50,6 @@ function buildCommunitySignalMessage(
     : 'Entry mới';
 
   return [
-    '<b>FBT - Auto Trade</b>',
     title,
     '',
     `📌 <b>Symbol:</b> ${escapeHtml(CONFIG.symbol)}`,
