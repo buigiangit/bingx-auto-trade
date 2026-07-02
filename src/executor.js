@@ -906,7 +906,7 @@ async function executeBingxMarketOrder(
     );
 
   let response;
-await getApiAccountBalance();
+/*await getApiAccountBalance();*/
   try {
     await setLeverageBeforeOrder(
       decision
