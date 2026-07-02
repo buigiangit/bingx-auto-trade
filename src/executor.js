@@ -9,37 +9,79 @@ import {
 } from './telegram.js';
 
 /**
- * Chuyển tín hiệu AI thành side dùng cho tài khoản Hedge Mode.
+ * Chuẩn hóa execution mode.
+ */
+function getExecutionMode() {
+  return String(CONFIG.executionMode || '')
+    .trim()
+    .toUpperCase();
+}
+
+/**
+ * Chuẩn hóa môi trường BingX.
+ */
+function getBingxEnv() {
+  return String(CONFIG.bingxEnv || '')
+    .trim()
+    .toLowerCase();
+}
+
+/**
+ * Kiểm tra BingX có trả lỗi API không.
+ */
+function hasBingxApiError(response) {
+  return (
+    response?.code !== undefined &&
+    response?.code !== 0 &&
+    response?.code !== '0'
+  );
+}
+
+/**
+ * Chuyển tín hiệu AI thành side cho Hedge Mode.
  */
 function sideFor(signal) {
-  if (signal === 'LONG') {
+  const normalized = String(signal || '')
+    .trim()
+    .toUpperCase();
+
+  if (normalized === 'LONG') {
     return {
       side: 'BUY',
       positionSide: 'LONG'
     };
   }
 
-  if (signal === 'SHORT') {
+  if (normalized === 'SHORT') {
     return {
       side: 'SELL',
       positionSide: 'SHORT'
     };
   }
 
-  throw new Error(`Signal không hợp lệ: ${signal}`);
+  throw new Error(
+    `Signal không hợp lệ: ${signal}`
+  );
 }
 
 /**
- * Tạo clientOrderId riêng cho mỗi request.
+ * Tạo clientOrderId riêng.
  */
-function clientOrderId(symbol) {
-  return `ai-vst-${symbol
+function clientOrderId(symbol, mode) {
+  const prefix =
+    mode === 'USDT_ORDER'
+      ? 'ai-live'
+      : mode === 'VST_ORDER'
+        ? 'ai-vst'
+        : 'ai-test';
+
+  return `${prefix}-${String(symbol || '')
     .replace('-', '')
     .toLowerCase()}-${Date.now()}`.slice(0, 40);
 }
 
 /**
- * Làm tròn giá theo pricePrecision của hợp đồng.
+ * Làm tròn giá.
  */
 function roundPrice(value, precision = 2) {
   const number = Number(value);
@@ -48,22 +90,40 @@ function roundPrice(value, precision = 2) {
     return null;
   }
 
-  const multiplier = Math.pow(10, precision);
+  const multiplier = Math.pow(
+    10,
+    precision
+  );
 
-  return Math.round(number * multiplier) / multiplier;
+  return (
+    Math.round(number * multiplier) /
+    multiplier
+  );
 }
 
 /**
  * Tạo tham số TP/SL gửi kèm lệnh MARKET.
  */
-function buildTpSlParams(decision, snapshot) {
-  const signal = decision.signal;
+function buildTpSlParams(
+  decision,
+  snapshot
+) {
+  const signal =
+    decision?.signal || {};
+
+  const signalSide = String(
+    signal.signal || ''
+  )
+    .trim()
+    .toUpperCase();
 
   const pricePrecision = Number(
     snapshot?.contract?.pricePrecision ?? 2
   );
 
-  const entry = Number(signal.entry);
+  const entry = Number(
+    signal.entry
+  );
 
   const stopLoss = roundPrice(
     signal.stopLoss,
@@ -75,7 +135,10 @@ function buildTpSlParams(decision, snapshot) {
     pricePrecision
   );
 
-  if (!Number.isFinite(entry) || entry <= 0) {
+  if (
+    !Number.isFinite(entry) ||
+    entry <= 0
+  ) {
     throw new Error(
       `Entry không hợp lệ: ${signal.entry}`
     );
@@ -99,12 +162,13 @@ function buildTpSlParams(decision, snapshot) {
     );
   }
 
-  if (signal.signal === 'LONG') {
-    const validLongStructure =
-      stopLoss < entry &&
-      takeProfit1 > entry;
-
-    if (!validLongStructure) {
+  if (signalSide === 'LONG') {
+    if (
+      !(
+        stopLoss < entry &&
+        takeProfit1 > entry
+      )
+    ) {
       throw new Error(
         `TP/SL LONG sai hướng. ` +
         `Entry: ${entry}, ` +
@@ -112,12 +176,15 @@ function buildTpSlParams(decision, snapshot) {
         `TP1: ${takeProfit1}`
       );
     }
-  } else if (signal.signal === 'SHORT') {
-    const validShortStructure =
-      stopLoss > entry &&
-      takeProfit1 < entry;
-
-    if (!validShortStructure) {
+  } else if (
+    signalSide === 'SHORT'
+  ) {
+    if (
+      !(
+        stopLoss > entry &&
+        takeProfit1 < entry
+      )
+    ) {
       throw new Error(
         `TP/SL SHORT sai hướng. ` +
         `Entry: ${entry}, ` +
@@ -127,7 +194,8 @@ function buildTpSlParams(decision, snapshot) {
     }
   } else {
     throw new Error(
-      `Không thể tạo TP/SL cho signal: ${signal.signal}`
+      `Không thể tạo TP/SL cho signal: ` +
+      `${signal.signal}`
     );
   }
 
@@ -149,11 +217,13 @@ function buildTpSlParams(decision, snapshot) {
 }
 
 /**
- * Set leverage theo hướng LONG/SHORT trước khi đặt order.
+ * Set leverage trước khi gửi order.
  */
-async function setLeverageBeforeOrder(decision) {
+async function setLeverageBeforeOrder(
+  decision
+) {
   const leverage = Number(
-    decision.leverage ||
+    decision?.leverage ||
     CONFIG.maxLeverage ||
     1
   );
@@ -167,17 +237,23 @@ async function setLeverageBeforeOrder(decision) {
     );
   }
 
-  const leverageSide =
-    decision.signal.signal === 'LONG'
+  const signal = String(
+    decision?.signal?.signal || ''
+  )
+    .trim()
+    .toUpperCase();
+
+  const side =
+    signal === 'LONG'
       ? 'LONG'
-      : decision.signal.signal === 'SHORT'
+      : signal === 'SHORT'
         ? 'SHORT'
         : 'ALL';
 
   const params = {
     symbol: CONFIG.symbol,
     leverage,
-    side: leverageSide
+    side
   };
 
   console.log(
@@ -193,30 +269,30 @@ async function setLeverageBeforeOrder(decision) {
 
   console.log(
     'Set leverage response:',
-    JSON.stringify(response, null, 2)
+    JSON.stringify(
+      response,
+      null,
+      2
+    )
   );
 
-  const returnedLeverage = Number(
-    response?.leverage ??
-    response?.data?.leverage
-  );
-
-  const hasApiError =
-    response?.code !== undefined &&
-    response?.code !== 0 &&
-    response?.code !== '0';
-
-  if (
-    hasApiError ||
-    !Number.isFinite(returnedLeverage)
-  ) {
+  if (hasBingxApiError(response)) {
     throw new Error(
       `Set leverage lỗi: ${
         response?.msg ||
+        response?.message ||
         JSON.stringify(response)
       }`
     );
   }
+
+  const returnedLeverage = Number(
+    response?.leverage ??
+    response?.data?.leverage ??
+    response?.data?.longLeverage ??
+    response?.data?.shortLeverage ??
+    leverage
+  );
 
   console.log(
     `Set leverage OK: x${returnedLeverage}`
@@ -226,7 +302,7 @@ async function setLeverageBeforeOrder(decision) {
 }
 
 /**
- * Lấy vị thế hiện đang mở trên BingX.
+ * Lấy vị thế đang mở.
  */
 async function getOpenPosition(
   symbol = CONFIG.symbol
@@ -234,19 +310,34 @@ async function getOpenPosition(
   const response = await fetchSigned(
     'GET',
     '/openApi/swap/v2/user/positions',
-    { symbol }
+    {
+      symbol
+    }
   );
 
-  const positions = Array.isArray(response)
-    ? response
-    : Array.isArray(response?.data)
-      ? response.data
-      : Array.isArray(response?.positions)
-        ? response.positions
-        : [];
+  if (hasBingxApiError(response)) {
+    throw new Error(
+      `Không lấy được vị thế BingX: ${
+        response?.msg ||
+        response?.message ||
+        JSON.stringify(response)
+      }`
+    );
+  }
 
-  const openedPosition = positions.find(
-    position => {
+  const positions =
+    Array.isArray(response)
+      ? response
+      : Array.isArray(response?.data)
+        ? response.data
+        : Array.isArray(
+            response?.positions
+          )
+          ? response.positions
+          : [];
+
+  const openedPosition =
+    positions.find(position => {
       const quantity = Math.abs(
         Number(
           position.positionAmt ??
@@ -259,8 +350,7 @@ async function getOpenPosition(
       );
 
       return quantity > 0;
-    }
-  );
+    });
 
   if (!openedPosition) {
     return null;
@@ -306,7 +396,8 @@ async function getOpenPosition(
     markPrice || avgPrice;
 
   const notional =
-    Math.abs(positionAmt) * currentPrice;
+    Math.abs(positionAmt) *
+    currentPrice;
 
   const margin =
     leverage > 0
@@ -315,15 +406,22 @@ async function getOpenPosition(
 
   const roePct =
     margin > 0
-      ? (unrealizedProfit / margin) * 100
+      ? (
+          unrealizedProfit /
+          margin
+        ) * 100
       : 0;
 
   return {
     symbol:
-      openedPosition.symbol || symbol,
+      openedPosition.symbol ||
+      symbol,
 
-    positionSide:
-      openedPosition.positionSide,
+    positionSide: String(
+      openedPosition.positionSide || ''
+    )
+      .trim()
+      .toUpperCase(),
 
     positionAmt,
     avgPrice,
@@ -338,7 +436,8 @@ async function getOpenPosition(
 }
 
 /**
- * Kiểm tra tín hiệu hiện tại có cùng hướng vị thế đang mở hay không.
+ * Kiểm tra tín hiệu có cùng hướng
+ * với vị thế hiện tại không.
  */
 function isSameDirection(
   openPosition,
@@ -348,17 +447,31 @@ function isSameDirection(
     return false;
   }
 
-  if (signal === 'LONG') {
+  const normalized = String(
+    signal || ''
+  )
+    .trim()
+    .toUpperCase();
+
+  if (normalized === 'LONG') {
     return (
-      openPosition.positionSide === 'LONG' ||
-      openPosition.positionAmt > 0
+      openPosition.positionSide ===
+        'LONG' ||
+      (
+        !openPosition.positionSide &&
+        openPosition.positionAmt > 0
+      )
     );
   }
 
-  if (signal === 'SHORT') {
+  if (normalized === 'SHORT') {
     return (
-      openPosition.positionSide === 'SHORT' ||
-      openPosition.positionAmt < 0
+      openPosition.positionSide ===
+        'SHORT' ||
+      (
+        !openPosition.positionSide &&
+        openPosition.positionAmt < 0
+      )
     );
   }
 
@@ -366,7 +479,7 @@ function isSameDirection(
 }
 
 /**
- * Tạo decision dành riêng cho DCA.
+ * Tạo decision cho DCA.
  */
 function buildDcaDecision(
   decision,
@@ -377,7 +490,9 @@ function buildDcaDecision(
   );
 
   const leverage = Number(
-    CONFIG.maxLeverage || 1
+    decision?.leverage ||
+    CONFIG.maxLeverage ||
+    1
   );
 
   const dcaNotional =
@@ -386,7 +501,7 @@ function buildDcaDecision(
   const price = Number(
     openPosition.markPrice ||
     openPosition.avgPrice ||
-    decision.signal.entry
+    decision?.signal?.entry
   );
 
   if (
@@ -394,7 +509,8 @@ function buildDcaDecision(
     dcaNotional <= 0
   ) {
     throw new Error(
-      `DCA notional không hợp lệ: ${dcaNotional}`
+      `DCA notional không hợp lệ: ` +
+      `${dcaNotional}`
     );
   }
 
@@ -403,12 +519,16 @@ function buildDcaDecision(
     price <= 0
   ) {
     throw new Error(
-      `Không tính được giá DCA hợp lệ: ${price}`
+      `Không tính được giá DCA hợp lệ: ` +
+      `${price}`
     );
   }
 
   const quantity = Number(
-    (dcaNotional / price).toFixed(4)
+    (
+      dcaNotional /
+      price
+    ).toFixed(4)
   );
 
   if (
@@ -416,7 +536,8 @@ function buildDcaDecision(
     quantity <= 0
   ) {
     throw new Error(
-      `Không tính được quantity DCA hợp lệ: ${quantity}`
+      `Không tính được quantity DCA hợp lệ: ` +
+      `${quantity}`
     );
   }
 
@@ -427,9 +548,11 @@ function buildDcaDecision(
     quantity,
     notional: dcaNotional,
     marginUsed: dcaMarginUsdt,
+    leverage,
 
     signal: {
       ...decision.signal,
+
       entry: price,
 
       reason:
@@ -442,13 +565,15 @@ function buildDcaDecision(
 }
 
 /**
- * Kiểm tra vị thế và điều kiện DCA.
+ * Kiểm tra vị thế và DCA.
  */
 async function checkPositionAndDcaGuard(
   decision
 ) {
   const openPosition =
-    await getOpenPosition(CONFIG.symbol);
+    await getOpenPosition(
+      CONFIG.symbol
+    );
 
   if (!openPosition) {
     return {
@@ -464,16 +589,16 @@ async function checkPositionAndDcaGuard(
     };
   }
 
-  const symbolState = getSymbolState(
-    CONFIG.symbol
-  );
+  const symbolState =
+    getSymbolState(
+      CONFIG.symbol
+    );
 
-  const now = Date.now();
-
-  const sameDirection = isSameDirection(
-    openPosition,
-    decision.signal.signal
-  );
+  const sameDirection =
+    isSameDirection(
+      openPosition,
+      decision.signal.signal
+    );
 
   if (!sameDirection) {
     return {
@@ -483,7 +608,7 @@ async function checkPositionAndDcaGuard(
 
       message:
         `Đang có vị thế ` +
-        `${openPosition.positionSide}, ` +
+        `${openPosition.positionSide || 'không rõ hướng'}, ` +
         `nhưng tín hiệu mới là ` +
         `${decision.signal.signal}. ` +
         `Bot không đảo chiều tự động.`
@@ -507,7 +632,14 @@ async function checkPositionAndDcaGuard(
     symbolState.dcaCount || 0
   );
 
-  if (dcaCount >= CONFIG.maxDcaCount) {
+  const maxDcaCount = Number(
+    CONFIG.maxDcaCount || 0
+  );
+
+  if (
+    dcaCount >=
+    maxDcaCount
+  ) {
     return {
       action: 'SKIP',
       decision,
@@ -516,23 +648,33 @@ async function checkPositionAndDcaGuard(
       message:
         `Đang có vị thế mở. ` +
         `Đã DCA ${dcaCount}/` +
-        `${CONFIG.maxDcaCount} lần, ` +
+        `${maxDcaCount} lần, ` +
         `không DCA thêm.`
     };
   }
 
   if (symbolState.lastDcaAt) {
     const elapsedSeconds =
-      (now - symbolState.lastDcaAt) / 1000;
+      (
+        Date.now() -
+        symbolState.lastDcaAt
+      ) / 1000;
+
+    const minSecondsBetweenDca =
+      Number(
+        CONFIG.minSecondsBetweenDca ||
+        0
+      );
 
     if (
       elapsedSeconds <
-      CONFIG.minSecondsBetweenDca
+      minSecondsBetweenDca
     ) {
-      const remainingSeconds = Math.ceil(
-        CONFIG.minSecondsBetweenDca -
-        elapsedSeconds
-      );
+      const remainingSeconds =
+        Math.ceil(
+          minSecondsBetweenDca -
+          elapsedSeconds
+        );
 
       return {
         action: 'SKIP',
@@ -547,9 +689,15 @@ async function checkPositionAndDcaGuard(
     }
   }
 
+  const dcaTriggerRoePct =
+    Number(
+      CONFIG.dcaTriggerRoePct ||
+      0
+    );
+
   if (
     openPosition.roePct >
-    CONFIG.dcaTriggerRoePct
+    dcaTriggerRoePct
   ) {
     return {
       action: 'SKIP',
@@ -567,41 +715,40 @@ async function checkPositionAndDcaGuard(
   return {
     action: 'DCA',
 
-    decision: buildDcaDecision(
-      decision,
-      openPosition
-    ),
+    decision:
+      buildDcaDecision(
+        decision,
+        openPosition
+      ),
 
     openPosition,
 
     message:
       `Cho phép DCA vì ROE ` +
       `${openPosition.roePct.toFixed(2)}% ` +
-      `<= ${CONFIG.dcaTriggerRoePct}%.`
+      `<= ${dcaTriggerRoePct}%.`
   };
 }
 
 /**
- * Kết quả khi không gửi order.
+ * Kết quả không gửi order.
  */
 function createNotExecutedResult(
   reason,
-  extra = {}
+  extra = {},
+  mode = getExecutionMode()
 ) {
   return {
     executed: false,
     isDca: false,
-    mode: CONFIG.executionMode,
+    mode,
     reason,
     ...extra
   };
 }
 
 /**
- * Gửi call Telegram dành cho cộng đồng.
- *
- * Hàm này luôn tự bắt lỗi để Telegram lỗi
- * không làm dừng luồng gửi BingX.
+ * Gửi Telegram độc lập với BingX.
  */
 function startCommunityTelegram(
   decision,
@@ -621,7 +768,8 @@ function startCommunityTelegram(
     })
     .catch(error => {
       const errorMessage =
-        error.response?.data?.description ||
+        error.response?.data
+          ?.description ||
         error.response?.data ||
         error.message ||
         String(error);
@@ -640,56 +788,572 @@ function startCommunityTelegram(
 }
 
 /**
+ * Đọc response order BingX.
+ */
+function parseBingxOrderResponse(
+  response,
+  decision,
+  sideInfo
+) {
+  const order =
+    response?.order ||
+    response?.data?.order ||
+    response?.data ||
+    response;
+
+  const orderId =
+    order?.orderId ||
+    order?.orderID ||
+    order?.clientOrderId ||
+    order?.clientOrderID ||
+    null;
+
+  const status =
+    order?.status ||
+    response?.status ||
+    null;
+
+  if (
+    !orderId &&
+    !status
+  ) {
+    throw new Error(
+      `Không xác nhận được order response: ` +
+      `${JSON.stringify(response)}`
+    );
+  }
+
+  const executedQuantity =
+    Number(
+      order?.executedQty ??
+      order?.quantity ??
+      decision.quantity
+    );
+
+  const executedEntry =
+    Number(
+      order?.avgPrice ??
+      order?.price ??
+      decision.signal.entry
+    );
+
+  const executedNotional =
+    Number.isFinite(
+      executedQuantity
+    ) &&
+    Number.isFinite(
+      executedEntry
+    ) &&
+    executedQuantity > 0 &&
+    executedEntry > 0
+      ? (
+          executedQuantity *
+          executedEntry
+        )
+      : Number(
+          decision.notional
+        );
+
+  return {
+    order,
+    orderId,
+    status,
+    executedQuantity,
+    executedEntry,
+    executedNotional,
+
+    symbol:
+      order?.symbol ||
+      CONFIG.symbol,
+
+    side:
+      order?.side ||
+      sideInfo.side,
+
+    positionSide:
+      order?.positionSide ||
+      sideInfo.positionSide
+  };
+}
+
+/**
+ * Gửi USDT_ORDER hoặc VST_ORDER.
+ */
+async function executeBingxMarketOrder(
+  decision,
+  snapshot,
+  mode
+) {
+  const sideInfo =
+    sideFor(
+      decision.signal.signal
+    );
+
+  const tpSlParams =
+    buildTpSlParams(
+      decision,
+      snapshot
+    );
+
+  /*
+   * Telegram bắt đầu gửi ngay,
+   * không chờ BingX.
+   */
+  const telegramPromise =
+    startCommunityTelegram(
+      decision,
+      snapshot
+    );
+
+  let response;
+
+  try {
+    await setLeverageBeforeOrder(
+      decision
+    );
+
+    const params = {
+      symbol: CONFIG.symbol,
+
+      side:
+        sideInfo.side,
+
+      positionSide:
+        sideInfo.positionSide,
+
+      type: 'MARKET',
+
+      quantity:
+        decision.quantity,
+
+      clientOrderId:
+        clientOrderId(
+          CONFIG.symbol,
+          mode
+        ),
+
+      ...tpSlParams
+    };
+
+    console.log(
+      decision.isDca
+        ? `Đang gửi lệnh DCA ${mode} kèm TP/SL:`
+        : `Đang gửi ${mode} kèm TP/SL:`,
+      params
+    );
+
+    response = await fetchSigned(
+      'POST',
+      '/openApi/swap/v2/trade/order',
+      params
+    );
+  } catch (error) {
+    const telegramResult =
+      await telegramPromise;
+
+    console.error(
+      `BingX gửi ${mode} lỗi:`,
+      error.response?.data ||
+      error.message ||
+      String(error)
+    );
+
+    console.log(
+      'Telegram vẫn giữ nguyên:',
+      telegramResult
+    );
+
+    throw error;
+  }
+
+  const telegramResult =
+    await telegramPromise;
+
+  console.log(
+    `${mode} response:`,
+    JSON.stringify(
+      response,
+      null,
+      2
+    )
+  );
+
+  if (hasBingxApiError(response)) {
+    const bingxError =
+      response?.msg ||
+      response?.message ||
+      JSON.stringify(response);
+
+    console.error(
+      `BingX từ chối ${mode}:`,
+      bingxError
+    );
+
+    throw new Error(
+      `Gửi ${mode} lỗi: ` +
+      `${bingxError}`
+    );
+  }
+
+  const parsed =
+    parseBingxOrderResponse(
+      response,
+      decision,
+      sideInfo
+    );
+
+  console.log(
+    'Order OK:',
+    {
+      mode,
+
+      orderId:
+        parsed.orderId,
+
+      status:
+        parsed.status,
+
+      symbol:
+        parsed.symbol,
+
+      side:
+        parsed.side,
+
+      positionSide:
+        parsed.positionSide,
+
+      avgPrice:
+        parsed.executedEntry,
+
+      executedQty:
+        parsed.executedQuantity,
+
+      stopLoss:
+        parsed.order?.stopLoss ||
+        decision.signal.stopLoss,
+
+      takeProfit:
+        parsed.order?.takeProfit ||
+        decision.signal.takeProfit1,
+
+      isDca:
+        Boolean(
+          decision.isDca
+        ),
+
+      telegram:
+        telegramResult
+    }
+  );
+
+  const currentState =
+    getSymbolState(
+      CONFIG.symbol
+    );
+
+  updateSymbolState(
+    CONFIG.symbol,
+    {
+      lastOrderAt:
+        Date.now(),
+
+      lastExecutionMode:
+        mode,
+
+      lastSignal:
+        decision.signal.signal,
+
+      lastOrderId:
+        parsed.orderId,
+
+      lastStatus:
+        parsed.status,
+
+      lastEntry:
+        parsed.executedEntry,
+
+      lastStopLoss:
+        decision.signal.stopLoss,
+
+      lastTakeProfit1:
+        decision.signal.takeProfit1,
+
+      lastTakeProfit2:
+        decision.signal.takeProfit2,
+
+      lastQuantity:
+        parsed.executedQuantity,
+
+      lastNotional:
+        parsed.executedNotional,
+
+      lastMarginUsed:
+        decision.marginUsed ||
+        null,
+
+      dcaCount:
+        decision.isDca
+          ? (
+              Number(
+                currentState.dcaCount ||
+                0
+              ) + 1
+            )
+          : 0,
+
+      lastDcaAt:
+        decision.isDca
+          ? Date.now()
+          : (
+              currentState.lastDcaAt ||
+              null
+            )
+    }
+  );
+
+  return {
+    executed: true,
+
+    isDca:
+      Boolean(
+        decision.isDca
+      ),
+
+    mode,
+
+    orderId:
+      parsed.orderId,
+
+    status:
+      parsed.status,
+
+    symbol:
+      parsed.symbol,
+
+    signal:
+      decision.signal.signal,
+
+    side:
+      parsed.side,
+
+    positionSide:
+      parsed.positionSide,
+
+    entry:
+      parsed.executedEntry,
+
+    stopLoss:
+      Number(
+        decision.signal.stopLoss
+      ),
+
+    takeProfit1:
+      Number(
+        decision.signal.takeProfit1
+      ),
+
+    takeProfit2:
+      Number(
+        decision.signal.takeProfit2
+      ),
+
+    quantity:
+      parsed.executedQuantity,
+
+    notional:
+      parsed.executedNotional,
+
+    marginUsed:
+      Number(
+        decision.marginUsed ||
+        0
+      ),
+
+    leverage:
+      Number(
+        decision.leverage ||
+        CONFIG.maxLeverage
+      ),
+
+    rr:
+      Number(
+        decision.rr ||
+        0
+      ),
+
+    reason:
+      decision.signal.reason ||
+      '',
+
+    riskNote:
+      decision.signal.riskNote ||
+      '',
+
+    telegram: {
+      sent:
+        telegramResult?.sent ===
+        true,
+
+      messageId:
+        telegramResult
+          ?.messageId ||
+        null
+    },
+
+    message:
+      decision.isDca
+        ? (
+            `Đã đăng call DCA lên Telegram ` +
+            `và xử lý ${mode} trên BingX.`
+          )
+        : (
+            `Đã đăng call lên Telegram ` +
+            `và xử lý ${mode} trên BingX.`
+          )
+  };
+}
+
+/**
  * Hàm xử lý chính.
  */
 export async function executeDecision(
   decision,
   snapshot,
-  allowVstOrder
+  allowVstOrder = false
 ) {
+  const mode =
+    getExecutionMode();
+
+  const bingxEnv =
+    getBingxEnv();
+
+  console.log(
+    `Executor mode: ${mode} | ` +
+    `BingX env: ${bingxEnv}`
+  );
+
   /*
-   * AI/risk filter chưa duyệt:
-   * không gửi Telegram, không gửi BingX.
+   * AI hoặc risk chưa duyệt.
    */
-  if (!decision.approved) {
+  if (!decision?.approved) {
     return createNotExecutedResult(
-      decision.reasons?.length
+      decision?.reasons?.length
         ? decision.reasons.join('; ')
-        : 'Decision không được duyệt'
+        : 'Decision không được duyệt',
+      {},
+      mode
     );
   }
 
   /*
-   * Chỉ phân tích tín hiệu.
+   * Chỉ gửi tín hiệu.
    */
   if (
-    CONFIG.executionMode === 'SIGNAL_ONLY'
+    mode === 'SIGNAL_ONLY'
   ) {
     return createNotExecutedResult(
-      'SIGNAL_ONLY: chỉ báo tín hiệu, không gửi order.'
+      'SIGNAL_ONLY: chỉ báo tín hiệu, không gửi order.',
+      {},
+      mode
     );
   }
 
   /*
-   * Kiểm tra vị thế hiện tại và điều kiện DCA.
+   * Các mode được hỗ trợ.
+   */
+  const supportedModes = [
+    'TEST_ORDER',
+    'VST_ORDER',
+    'USDT_ORDER'
+  ];
+
+  if (
+    !supportedModes.includes(
+      mode
+    )
+  ) {
+    return createNotExecutedResult(
+      `Execution mode không hỗ trợ: ` +
+      `${mode}`,
+      {},
+      mode
+    );
+  }
+
+  /*
+   * Kiểm tra VST.
+   */
+  if (
+    mode === 'VST_ORDER'
+  ) {
+    if (!allowVstOrder) {
+      return createNotExecutedResult(
+        'Thiếu flag --allow-vst-order',
+        {},
+        mode
+      );
+    }
+
+    if (
+      bingxEnv !== 'prod-vst'
+    ) {
+      return createNotExecutedResult(
+        `VST_ORDER chỉ được chạy khi ` +
+        `BINGX_ENV=prod-vst. ` +
+        `Hiện tại: ` +
+        `${bingxEnv || '(trống)'}`,
+        {},
+        mode
+      );
+    }
+  }
+
+  /*
+   * Kiểm tra tiền thật USDT.
+   */
+  if (
+    mode === 'USDT_ORDER' &&
+    bingxEnv !== 'prod-live'
+  ) {
+    return createNotExecutedResult(
+      `USDT_ORDER chỉ được chạy khi ` +
+      `BINGX_ENV=prod-live. ` +
+      `Hiện tại: ` +
+      `${bingxEnv || '(trống)'}`,
+      {},
+      mode
+    );
+  }
+
+  /*
+   * Kiểm tra vị thế và DCA.
    */
   const guard =
-    await checkPositionAndDcaGuard(decision);
+    await checkPositionAndDcaGuard(
+      decision
+    );
 
-  if (guard.action === 'SKIP') {
+  if (
+    guard.action === 'SKIP'
+  ) {
     return createNotExecutedResult(
       guard.message ||
       'Đang có vị thế mở, không vào thêm.',
       {
         openPosition:
-          guard.openPosition || null
-      }
+          guard.openPosition ||
+          null
+      },
+      mode
     );
   }
 
-  decision = guard.decision;
+  decision =
+    guard.decision;
 
-  if (guard.action === 'DCA') {
+  if (
+    guard.action === 'DCA'
+  ) {
     console.log(
       'DCA GUARD:',
       guard.message
@@ -697,32 +1361,43 @@ export async function executeDecision(
   }
 
   /*
-   * TEST_ORDER:
-   * không gửi call Telegram cộng đồng.
+   * Test order.
    */
   if (
-    CONFIG.executionMode === 'TEST_ORDER'
+    mode === 'TEST_ORDER'
   ) {
-    const sideInfo = sideFor(
-      decision.signal.signal
-    );
+    const sideInfo =
+      sideFor(
+        decision.signal.signal
+      );
 
-    const tpSlParams = buildTpSlParams(
-      decision,
-      snapshot
-    );
+    const tpSlParams =
+      buildTpSlParams(
+        decision,
+        snapshot
+      );
 
     const params = {
-      symbol: CONFIG.symbol,
-      side: sideInfo.side,
+      symbol:
+        CONFIG.symbol,
+
+      side:
+        sideInfo.side,
+
       positionSide:
         sideInfo.positionSide,
-      type: 'MARKET',
+
+      type:
+        'MARKET',
+
       quantity:
         decision.quantity,
 
       clientOrderId:
-        clientOrderId(CONFIG.symbol),
+        clientOrderId(
+          CONFIG.symbol,
+          mode
+        ),
 
       ...tpSlParams
     };
@@ -732,26 +1407,31 @@ export async function executeDecision(
       params
     );
 
-    const response = await fetchSigned(
-      'POST',
-      '/openApi/swap/v2/trade/order/test',
-      params
-    );
+    const response =
+      await fetchSigned(
+        'POST',
+        '/openApi/swap/v2/trade/order/test',
+        params
+      );
 
     console.log(
       'TEST_ORDER response:',
-      JSON.stringify(response, null, 2)
+      JSON.stringify(
+        response,
+        null,
+        2
+      )
     );
 
-    const hasApiError =
-      response?.code !== undefined &&
-      response?.code !== 0 &&
-      response?.code !== '0';
-
-    if (hasApiError) {
+    if (
+      hasBingxApiError(
+        response
+      )
+    ) {
       throw new Error(
         `Gửi TEST_ORDER lỗi: ${
           response?.msg ||
+          response?.message ||
           JSON.stringify(response)
         }`
       );
@@ -759,10 +1439,16 @@ export async function executeDecision(
 
     return {
       executed: false,
+
       testSent: true,
+
       isDca:
-        Boolean(decision.isDca),
-      mode: 'TEST_ORDER',
+        Boolean(
+          decision.isDca
+        ),
+
+      mode:
+        'TEST_ORDER',
 
       reason:
         'Đã gửi test order, nhưng chưa tạo vị thế trên BingX.',
@@ -772,381 +1458,12 @@ export async function executeDecision(
   }
 
   /*
-   * VST_ORDER:
-   * - Telegram đăng call cho cộng đồng.
-   * - BingX xử lý order riêng.
-   * - BingX thành công/lỗi không sửa tin Telegram.
+   * USDT_ORDER và VST_ORDER
+   * đều gửi vào endpoint đặt order.
    */
-  if (
-    CONFIG.executionMode === 'VST_ORDER'
-  ) {
-    if (!allowVstOrder) {
-      return createNotExecutedResult(
-        'Thiếu flag --allow-vst-order'
-      );
-    }
-
-    if (CONFIG.bingxEnv !== 'prod-vst') {
-      throw new Error(
-        'VST_ORDER chỉ được chạy khi BINGX_ENV=prod-vst'
-      );
-    }
-
-    /*
-     * Bắt đầu gửi Telegram ngay khi guard đã cho phép.
-     *
-     * Không chờ set leverage hoặc BingX trả kết quả.
-     */
-    const telegramPromise =
-      startCommunityTelegram(
-        decision,
-        snapshot
-      );
-
-    /*
-     * Tạo thông tin order BingX.
-     *
-     * Nếu đoạn này lỗi thì Telegram vẫn đã được gửi,
-     * nhưng lỗi BingX chỉ hiển thị trong log.
-     */
-    const sideInfo = sideFor(
-      decision.signal.signal
-    );
-
-    const tpSlParams = buildTpSlParams(
-      decision,
-      snapshot
-    );
-
-    /*
-     * Set leverage trước khi gửi order BingX.
-     */
-    await setLeverageBeforeOrder(decision);
-
-    const params = {
-      symbol: CONFIG.symbol,
-      side: sideInfo.side,
-      positionSide:
-        sideInfo.positionSide,
-      type: 'MARKET',
-      quantity:
-        decision.quantity,
-
-      clientOrderId:
-        clientOrderId(CONFIG.symbol),
-
-      ...tpSlParams
-    };
-
-    console.log(
-      decision.isDca
-        ? 'Đang gửi lệnh DCA VST kèm TP/SL:'
-        : 'Đang gửi VST_ORDER kèm TP/SL:',
-      params
-    );
-
-    /*
-     * Gửi order BingX.
-     *
-     * Telegram đang chạy độc lập ở telegramPromise.
-     */
-    let response;
-
-    try {
-      response = await fetchSigned(
-        'POST',
-        '/openApi/swap/v2/trade/order',
-        params
-      );
-    } catch (error) {
-      /*
-       * Đảm bảo Telegram promise được xử lý,
-       * nhưng không thay đổi/xóa tin Telegram.
-       */
-      const telegramResult =
-        await telegramPromise;
-
-      console.error(
-        'BingX gửi order lỗi:',
-        error.response?.data ||
-        error.message ||
-        String(error)
-      );
-
-      console.log(
-        'Telegram vẫn giữ nguyên:',
-        telegramResult
-      );
-
-      throw error;
-    }
-
-    /*
-     * Lấy kết quả Telegram.
-     * Tin Telegram không phụ thuộc response BingX.
-     */
-    const telegramResult =
-      await telegramPromise;
-
-    console.log(
-      'VST_ORDER response:',
-      JSON.stringify(response, null, 2)
-    );
-
-    const hasApiError =
-      response?.code !== undefined &&
-      response?.code !== 0 &&
-      response?.code !== '0';
-
-    if (hasApiError) {
-      const bingxError =
-        response?.msg ||
-        response?.message ||
-        JSON.stringify(response);
-
-      console.error(
-        'BingX từ chối order:',
-        bingxError
-      );
-
-      /*
-       * Không sửa tin Telegram.
-       */
-      throw new Error(
-        `Gửi VST_ORDER lỗi: ${bingxError}`
-      );
-    }
-
-    /*
-     * Parse response order BingX.
-     */
-    const order =
-      response?.order ||
-      response?.data?.order ||
-      response?.data ||
-      response;
-
-    const orderId =
-      order?.orderId ||
-      order?.orderID ||
-      order?.clientOrderId ||
-      order?.clientOrderID ||
-      null;
-
-    const status =
-      order?.status ||
-      null;
-
-    if (!orderId && !status) {
-      throw new Error(
-        `Không xác nhận được order response: ` +
-        `${JSON.stringify(response)}`
-      );
-    }
-
-    const executedQuantity = Number(
-      order?.executedQty ??
-      order?.quantity ??
-      decision.quantity
-    );
-
-    const executedEntry = Number(
-      order?.avgPrice ??
-      order?.price ??
-      decision.signal.entry
-    );
-
-    const executedNotional =
-      Number.isFinite(executedQuantity) &&
-      Number.isFinite(executedEntry) &&
-      executedQuantity > 0 &&
-      executedEntry > 0
-        ? executedQuantity *
-          executedEntry
-        : Number(decision.notional);
-
-    console.log('Order OK:', {
-      orderId,
-      status,
-
-      symbol:
-        order?.symbol ||
-        CONFIG.symbol,
-
-      side:
-        order?.side ||
-        sideInfo.side,
-
-      positionSide:
-        order?.positionSide ||
-        sideInfo.positionSide,
-
-      avgPrice:
-        executedEntry,
-
-      executedQty:
-        executedQuantity,
-
-      stopLoss:
-        order?.stopLoss ||
-        decision.signal.stopLoss,
-
-      takeProfit:
-        order?.takeProfit ||
-        decision.signal.takeProfit1,
-
-      isDca:
-        Boolean(decision.isDca),
-
-      telegram:
-        telegramResult
-    });
-
-    /*
-     * Lưu state sau khi BingX xác nhận order thành công.
-     */
-    const currentState =
-      getSymbolState(CONFIG.symbol);
-
-    updateSymbolState(
-      CONFIG.symbol,
-      {
-        lastOrderAt: Date.now(),
-
-        lastSignal:
-          decision.signal.signal,
-
-        lastOrderId:
-          orderId,
-
-        lastStatus:
-          status,
-
-        lastEntry:
-          executedEntry,
-
-        lastStopLoss:
-          decision.signal.stopLoss,
-
-        lastTakeProfit1:
-          decision.signal.takeProfit1,
-
-        lastTakeProfit2:
-          decision.signal.takeProfit2,
-
-        lastQuantity:
-          executedQuantity,
-
-        lastNotional:
-          executedNotional,
-
-        lastMarginUsed:
-          decision.marginUsed || null,
-
-        dcaCount:
-          decision.isDca
-            ? Number(
-                currentState.dcaCount || 0
-              ) + 1
-            : 0,
-
-        lastDcaAt:
-          decision.isDca
-            ? Date.now()
-            : currentState.lastDcaAt ||
-              null
-      }
-    );
-
-    return {
-      executed: true,
-
-      isDca:
-        Boolean(decision.isDca),
-
-      mode: 'VST_ORDER',
-
-      orderId,
-      status,
-
-      symbol:
-        order?.symbol ||
-        CONFIG.symbol,
-
-      signal:
-        decision.signal.signal,
-
-      side:
-        order?.side ||
-        sideInfo.side,
-
-      positionSide:
-        order?.positionSide ||
-        sideInfo.positionSide,
-
-      entry:
-        executedEntry,
-
-      stopLoss:
-        Number(
-          decision.signal.stopLoss
-        ),
-
-      takeProfit1:
-        Number(
-          decision.signal.takeProfit1
-        ),
-
-      takeProfit2:
-        Number(
-          decision.signal.takeProfit2
-        ),
-
-      quantity:
-        executedQuantity,
-
-      notional:
-        executedNotional,
-
-      marginUsed:
-        Number(
-          decision.marginUsed || 0
-        ),
-
-      leverage:
-        Number(
-          decision.leverage ||
-          CONFIG.maxLeverage
-        ),
-
-      rr:
-        Number(
-          decision.rr || 0
-        ),
-
-      reason:
-        decision.signal.reason || '',
-
-      riskNote:
-        decision.signal.riskNote || '',
-
-      telegram: {
-        sent:
-          telegramResult?.sent === true,
-
-        messageId:
-          telegramResult?.messageId || null
-      },
-
-      message:
-        decision.isDca
-          ? 'Đã đăng call DCA lên Telegram và xử lý order BingX.'
-          : 'Đã đăng call lên Telegram và xử lý order BingX.'
-    };
-  }
-
-  return createNotExecutedResult(
-    `Execution mode không hỗ trợ: ` +
-    `${CONFIG.executionMode}`
+  return executeBingxMarketOrder(
+    decision,
+    snapshot,
+    mode
   );
 }
