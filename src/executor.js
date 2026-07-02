@@ -906,7 +906,7 @@ async function executeBingxMarketOrder(
     );
 
   let response;
-
+await getApiAccountBalance();
   try {
     await setLeverageBeforeOrder(
       decision
@@ -1466,4 +1466,18 @@ export async function executeDecision(
     snapshot,
     mode
   );
+}
+async function getApiAccountBalance() {
+  const response = await fetchSigned(
+    'GET',
+    '/openApi/swap/v3/user/balance',
+    {}
+  );
+
+  console.log(
+    'API ACCOUNT BALANCE RAW:',
+    JSON.stringify(response, null, 2)
+  );
+
+  return response;
 }
