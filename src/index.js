@@ -8,6 +8,9 @@ import { askAI } from './ai.js';
 import { validateAndSize } from './risk.js';
 import { executeDecision } from './executor.js';
 import { logJson } from './logger.js';
+import {
+  startH4ReportScheduler
+} from './h4Reporter.js';
 
 const args = new Set(process.argv.slice(2));
 
@@ -791,7 +794,7 @@ async function startLoop() {
   console.log(
     '====================================='
   );
-
+  startH4ReportScheduler();
   /*
    * Chạy ngay vòng đầu tiên.
    */
