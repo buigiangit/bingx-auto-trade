@@ -489,7 +489,7 @@ const indicators =
 snapshot.indicators || {};
 
 const header = [
-'📊 <b>FBT - BTC H4 UPDATE</b>',
+'📊 <b>BTC H4 - CẬP NHẬT PHÂN TÍCH KỸ THUẬT</b>',
 '',
 `📌 <b>Symbol:</b> ${escapeHtml(snapshot.symbol)}`,
 `⏱ <b>Khung:</b> H4`,
