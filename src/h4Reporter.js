@@ -9,223 +9,305 @@ let lastReportKey = null;
 let isH4ReportRunning = false;
 
 function getOpenAIClient() {
-  if (!CONFIG.openaiApiKey) {
-    throw new Error(
-      'Thiếu OPENAI_API_KEY để tạo bài phân tích H4'
-    );
-  }
+if (!CONFIG.openaiApiKey) {
+throw new Error(
+'Thiếu OPENAI_API_KEY để tạo bài phân tích H4'
+);
+}
 
-  if (!openaiClient) {
-    openaiClient = new OpenAI({
-      apiKey: CONFIG.openaiApiKey
-    });
-  }
+if (!openaiClient) {
+openaiClient = new OpenAI({
+apiKey: CONFIG.openaiApiKey
+});
+}
 
-  return openaiClient;
+return openaiClient;
 }
 
 function escapeHtml(value) {
-  return String(value ?? '')
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;');
+return String(value ?? '')
+.replaceAll('&', '&')
+.replaceAll('<', '<')
+.replaceAll('>', '>');
 }
 
 function formatNumber(value, digits = 2) {
-  const number = Number(value);
+const number = Number(value);
 
-  if (!Number.isFinite(number)) {
-    return 'N/A';
-  }
+if (!Number.isFinite(number)) {
+return 'N/A';
+}
 
-  return number.toLocaleString('en-US', {
-    maximumFractionDigits: digits
-  });
+return number.toLocaleString('en-US', {
+maximumFractionDigits: digits
+});
+}
+
+function maskToken(token) {
+const value = String(token || '');
+
+if (value.length <= 12) {
+return '***';
+}
+
+return `${value.slice(0, 6)}...${value.slice(-4)}`;
 }
 
 function getVietnamTimeParts(date = new Date()) {
-  const formatter = new Intl.DateTimeFormat(
-    'en-CA',
-    {
-      timeZone:
-        CONFIG.h4ReportTimezone ||
-        'Asia/Ho_Chi_Minh',
+const formatter = new Intl.DateTimeFormat(
+'en-CA',
+{
+timeZone:
+CONFIG.h4ReportTimezone ||
+'Asia/Ho_Chi_Minh',
 
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false
-    }
-  );
+```
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false
+}
+```
 
-  const parts = Object.fromEntries(
-    formatter
-      .formatToParts(date)
-      .map(part => [
-        part.type,
-        part.value
-      ])
-  );
+);
 
-  return {
-    dateKey:
-      `${parts.year}-${parts.month}-${parts.day}`,
+const parts = Object.fromEntries(
+formatter
+.formatToParts(date)
+.map(part => [
+part.type,
+part.value
+])
+);
 
-    timeKey:
-      `${parts.hour}:${parts.minute}`,
+return {
+dateKey:
+`${parts.year}-${parts.month}-${parts.day}`,
 
-    fullKey:
-      `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`
-  };
+```
+timeKey:
+  `${parts.hour}:${parts.minute}`,
+
+fullKey:
+  `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`
+```
+
+};
 }
 
 function shouldSendH4ReportNow() {
-  if (!CONFIG.h4ReportEnabled) {
-    return {
-      shouldSend: false,
-      reason: 'H4_REPORT_ENABLED=false'
-    };
+if (!CONFIG.h4ReportEnabled) {
+return {
+shouldSend: false,
+reason: 'H4_REPORT_ENABLED=false'
+};
+}
+
+const times = Array.isArray(
+CONFIG.h4ReportTimes
+)
+? CONFIG.h4ReportTimes
+: [];
+
+if (times.length === 0) {
+return {
+shouldSend: false,
+reason: 'Chưa cấu hình H4_REPORT_TIMES'
+};
+}
+
+const timeParts =
+getVietnamTimeParts();
+
+const matched =
+times.includes(
+timeParts.timeKey
+);
+
+if (!matched) {
+return {
+shouldSend: false,
+reason:
+`Chưa tới giờ gửi H4. Hiện tại ${timeParts.timeKey}`,
+timeParts
+};
+}
+
+if (
+lastReportKey === timeParts.fullKey
+) {
+return {
+shouldSend: false,
+reason:
+`Đã gửi report cho mốc ${timeParts.fullKey}`,
+timeParts
+};
+}
+
+return {
+shouldSend: true,
+timeParts
+};
+}
+
+function buildReportTargets() {
+const tokens = Array.isArray(
+CONFIG.h4ReportBotTokens
+)
+? CONFIG.h4ReportBotTokens
+: [];
+
+const chatIds = Array.isArray(
+CONFIG.h4ReportChatIds
+)
+? CONFIG.h4ReportChatIds
+: [];
+
+if (tokens.length === 0) {
+throw new Error(
+'Thiếu H4_REPORT_BOT_TOKENS'
+);
+}
+
+if (chatIds.length === 0) {
+throw new Error(
+'Thiếu H4_REPORT_CHAT_IDS'
+);
+}
+
+/*
+
+* Trường hợp 1:
+* 1 bot đăng nhiều channel.
+  */
+  if (tokens.length === 1) {
+  return chatIds.map(chatId => ({
+  botToken:
+  tokens[0],
+
+  chatId
+  }));
   }
 
-  const times = Array.isArray(
-    CONFIG.h4ReportTimes
-  )
-    ? CONFIG.h4ReportTimes
-    : [];
+/*
 
-  if (times.length === 0) {
-    return {
-      shouldSend: false,
-      reason: 'Chưa cấu hình H4_REPORT_TIMES'
-    };
+* Trường hợp 2:
+* token 1 -> chat id 1
+* token 2 -> chat id 2
+  */
+  if (tokens.length === chatIds.length) {
+  return tokens.map(
+  (botToken, index) => ({
+  botToken,
+  chatId:
+  chatIds[index]
+  })
+  );
   }
 
-  const timeParts =
-    getVietnamTimeParts();
-
-  const matched =
-    times.includes(
-      timeParts.timeKey
-    );
-
-  if (!matched) {
-    return {
-      shouldSend: false,
-      reason:
-        `Chưa tới giờ gửi H4. Hiện tại ${timeParts.timeKey}`,
-      timeParts
-    };
-  }
-
-  if (
-    lastReportKey === timeParts.fullKey
-  ) {
-    return {
-      shouldSend: false,
-      reason:
-        `Đã gửi report cho mốc ${timeParts.fullKey}`,
-      timeParts
-    };
-  }
-
-  return {
-    shouldSend: true,
-    timeParts
-  };
+throw new Error(
+`Cấu hình H4 report không khớp: ` +
+`H4_REPORT_BOT_TOKENS có ${tokens.length} token, ` +
+`H4_REPORT_CHAT_IDS có ${chatIds.length} chat id. ` +
+`Hãy dùng 1 token cho nhiều chat id, hoặc số token bằng số chat id.`
+);
 }
 
 function buildMarketPayload(snapshot) {
-  const indicators =
-    snapshot.indicators || {};
+const indicators =
+snapshot.indicators || {};
 
-  const candles =
-    Array.isArray(snapshot.candles)
-      ? snapshot.candles.slice(-60)
-      : [];
+const candles =
+Array.isArray(snapshot.candles)
+? snapshot.candles.slice(-60)
+: [];
 
-  return {
-    symbol:
-      snapshot.symbol,
+return {
+symbol:
+snapshot.symbol,
 
-    interval:
-      snapshot.interval,
+```
+interval:
+  snapshot.interval,
 
-    lastPrice:
-      indicators.lastClose,
+lastPrice:
+  indicators.lastClose,
 
-    trend:
-      indicators.trend,
+trend:
+  indicators.trend,
 
-    ema34:
-      indicators.ema34,
+ema34:
+  indicators.ema34,
 
-    ema89:
-      indicators.ema89,
+ema89:
+  indicators.ema89,
 
-    ema200:
-      indicators.ema200,
+ema200:
+  indicators.ema200,
 
-    rsi14:
-      indicators.rsi14,
+rsi14:
+  indicators.rsi14,
 
-    macd:
-      indicators.macd,
+macd:
+  indicators.macd,
 
-    atr14:
-      indicators.atr14,
+atr14:
+  indicators.atr14,
 
-    support:
-      indicators.support,
+support:
+  indicators.support,
 
-    resistance:
-      indicators.resistance,
+resistance:
+  indicators.resistance,
+
+volume:
+  indicators.volume,
+
+funding:
+  snapshot.premium?.lastFundingRate ??
+  snapshot.funding?.fundingRate,
+
+openInterest:
+  snapshot.oi?.openInterest,
+
+spreadPct:
+  snapshot.book?.spreadPct,
+
+recentCandles:
+  candles.map(candle => ({
+    time:
+      candle.time,
+
+    open:
+      candle.open,
+
+    high:
+      candle.high,
+
+    low:
+      candle.low,
+
+    close:
+      candle.close,
 
     volume:
-      indicators.volume,
+      candle.volume
+  }))
+```
 
-    funding:
-      snapshot.premium?.lastFundingRate ??
-      snapshot.funding?.fundingRate,
-
-    openInterest:
-      snapshot.oi?.openInterest,
-
-    spreadPct:
-      snapshot.book?.spreadPct,
-
-    recentCandles:
-      candles.map(candle => ({
-        time:
-          candle.time,
-
-        open:
-          candle.open,
-
-        high:
-          candle.high,
-
-        low:
-          candle.low,
-
-        close:
-          candle.close,
-
-        volume:
-          candle.volume
-      }))
-  };
+};
 }
 
 async function generateH4Article(snapshot) {
-  const client =
-    getOpenAIClient();
+const client =
+getOpenAIClient();
 
-  const market =
-    buildMarketPayload(snapshot);
+const market =
+buildMarketPayload(snapshot);
 
-  const prompt = `
+const prompt = `
 Bạn là một trader crypto chuyên viết bài update thị trường cho cộng đồng.
 
 Hãy viết một bài phân tích BTC khung H4 bằng tiếng Việt, văn phong gần gũi trader, rõ ràng, không quá dài.
@@ -240,220 +322,344 @@ Yêu cầu bài viết:
 6. Có cảnh báo rủi ro.
 7. Không khẳng định chắc chắn giá sẽ tăng/giảm.
 8. Không nói đây là lời khuyên đầu tư.
-9. Không nhắc đến bot đang trade hay order BingX.
+9. Không nhắc đến bot đang trade, lệnh BingX hoặc API.
 10. Không dùng markdown bảng.
 11. Có thể dùng emoji vừa phải.
+12. Viết như bài đăng channel Telegram cho cộng đồng trader.
 
 Dữ liệu thị trường:
 ${JSON.stringify(market)}
 `;
 
-  const response =
-    await client.responses.create({
-      model:
-        CONFIG.openaiModel,
+const response =
+await client.responses.create({
+model:
+CONFIG.openaiModel,
 
-      input:
-        prompt,
+```
+  input:
+    prompt,
 
-      max_output_tokens:
-        1200
-    });
+  max_output_tokens:
+    1200
+});
+```
 
-  const text =
-    response.output_text ||
-    '';
+const text =
+response.output_text ||
+'';
 
-  if (!text.trim()) {
-    throw new Error(
-      'OpenAI không trả về bài phân tích H4'
-    );
-  }
-
-  return text.trim();
+if (!text.trim()) {
+throw new Error(
+'OpenAI không trả về bài phân tích H4'
+);
 }
 
-async function sendH4ArticleToTelegram(
-  article,
-  snapshot
+return text.trim();
+}
+
+function buildTelegramMessage(
+article,
+snapshot
 ) {
-  if (!CONFIG.telegramBotToken) {
-    throw new Error(
-      'Thiếu TELEGRAM_BOT_TOKEN'
-    );
+const indicators =
+snapshot.indicators || {};
+
+const header = [
+'📊 <b>FBT - BTC H4 UPDATE</b>',
+'',
+`📌 <b>Symbol:</b> ${escapeHtml(snapshot.symbol)}`,
+`⏱ <b>Khung:</b> H4`,
+`💰 <b>Giá:</b> ${formatNumber(indicators.lastClose, 2)}`,
+`📈 <b>Trend:</b> ${escapeHtml(indicators.trend || 'N/A')}`,
+''
+].join('\n');
+
+const footer = [
+'',
+'<i>Thông tin chỉ mang tính tham khảo, không phải lời khuyên đầu tư.</i>'
+].join('\n');
+
+return (
+header +
+escapeHtml(article) +
+footer
+);
+}
+
+async function sendTelegramMessage(
+target,
+text
+) {
+const url =
+`https://api.telegram.org/bot` +
+`${target.botToken}/sendMessage`;
+
+const response =
+await axios.post(
+url,
+{
+chat_id:
+target.chatId,
+
+```
+    text,
+
+    parse_mode:
+      'HTML',
+
+    disable_web_page_preview:
+      true
+  },
+  {
+    timeout: 20000
   }
+);
+```
 
-  if (!CONFIG.h4ReportChannelId) {
-    throw new Error(
-      'Thiếu H4_REPORT_CHANNEL_ID'
-    );
-  }
+if (!response.data?.ok) {
+throw new Error(
+`Telegram gửi thất bại: ` +
+`${JSON.stringify(response.data)}`
+);
+}
 
-  const indicators =
-    snapshot.indicators || {};
+return {
+sent: true,
 
-  const header = [
-    '📊 <b>FBT - BTC H4 UPDATE</b>',
-    '',
-    `📌 <b>Symbol:</b> ${escapeHtml(snapshot.symbol)}`,
-    `⏱ <b>Khung:</b> H4`,
-    `💰 <b>Giá:</b> ${formatNumber(indicators.lastClose, 2)}`,
-    `📈 <b>Trend:</b> ${escapeHtml(indicators.trend || 'N/A')}`,
-    ''
-  ].join('\n');
+```
+chatId:
+  target.chatId,
 
-  const footer = [
-    '',
-    '<i>Thông tin chỉ mang tính tham khảo, không phải lời khuyên đầu tư.</i>'
-  ].join('\n');
+messageId:
+  response.data.result?.message_id
+```
 
-  const text =
-    header +
-    escapeHtml(article) +
-    footer;
+};
+}
 
-  const url =
-    `https://api.telegram.org/bot` +
-    `${CONFIG.telegramBotToken}/sendMessage`;
+async function sendH4ArticleToAllChannels(
+article,
+snapshot
+) {
+const targets =
+buildReportTargets();
 
-  const response =
-    await axios.post(
-      url,
-      {
-        chat_id:
-          CONFIG.h4ReportChannelId,
+const text =
+buildTelegramMessage(
+article,
+snapshot
+);
 
-        text,
+const settled =
+await Promise.allSettled(
+targets.map(target =>
+sendTelegramMessage(
+target,
+text
+)
+)
+);
 
-        parse_mode:
-          'HTML',
+const results =
+settled.map((item, index) => {
+const target =
+targets[index];
 
-        disable_web_page_preview:
-          true
-      },
-      {
-        timeout: 20000
-      }
-    );
+```
+  if (item.status === 'fulfilled') {
+    return {
+      ok: true,
 
-  if (!response.data?.ok) {
-    throw new Error(
-      `Telegram gửi H4 report thất bại: ` +
-      `${JSON.stringify(response.data)}`
-    );
+      chatId:
+        target.chatId,
+
+      botToken:
+        maskToken(target.botToken),
+
+      result:
+        item.value
+    };
   }
 
   return {
-    sent: true,
-    messageId:
-      response.data.result?.message_id
+    ok: false,
+
+    chatId:
+      target.chatId,
+
+    botToken:
+      maskToken(target.botToken),
+
+    error:
+      item.reason?.response?.data ||
+      item.reason?.message ||
+      String(item.reason)
   };
+});
+```
+
+const successCount =
+results.filter(item => item.ok).length;
+
+const failedCount =
+results.length - successCount;
+
+console.log(
+'Kết quả gửi H4 report:',
+{
+total:
+results.length,
+
+```
+  success:
+    successCount,
+
+  failed:
+    failedCount,
+
+  results
+}
+```
+
+);
+
+return {
+total:
+results.length,
+
+```
+success:
+  successCount,
+
+failed:
+  failedCount,
+
+results
+```
+
+};
 }
 
 export async function runH4ReportOnce() {
-  const raw =
-    await buildMarketSnapshot('4h');
+const raw =
+await buildMarketSnapshot('4h');
 
-  const snapshot =
-    addIndicators(raw);
+const snapshot =
+addIndicators(raw);
 
-  const article =
-    await generateH4Article(snapshot);
+const article =
+await generateH4Article(snapshot);
 
-  const telegramResult =
-    await sendH4ArticleToTelegram(
-      article,
-      snapshot
-    );
+const telegramResult =
+await sendH4ArticleToAllChannels(
+article,
+snapshot
+);
 
-  console.log(
-    'Đã gửi H4 report:',
-    telegramResult
-  );
+console.log(
+'Đã xử lý H4 report:',
+telegramResult
+);
 
-  return {
-    snapshot,
-    article,
-    telegramResult
-  };
+return {
+snapshot,
+article,
+telegramResult
+};
 }
 
 export async function checkAndSendH4Report() {
-  if (isH4ReportRunning) {
-    console.log(
-      'H4 report đang chạy, bỏ qua lần check này...'
-    );
+if (isH4ReportRunning) {
+console.log(
+'H4 report đang chạy, bỏ qua lần check này...'
+);
 
-    return;
-  }
+```
+return;
+```
 
-  const check =
-    shouldSendH4ReportNow();
+}
 
-  if (!check.shouldSend) {
-    return;
-  }
+const check =
+shouldSendH4ReportNow();
 
-  isH4ReportRunning = true;
+if (!check.shouldSend) {
+return;
+}
 
-  try {
-    console.log(
-      `Đến giờ gửi H4 report: ${check.timeParts.fullKey}`
-    );
+isH4ReportRunning = true;
 
-    await runH4ReportOnce();
+try {
+console.log(
+`Đến giờ gửi H4 report: ${check.timeParts.fullKey}`
+);
 
-    lastReportKey =
-      check.timeParts.fullKey;
-  } catch (error) {
-    console.error(
-      'Gửi H4 report lỗi:',
-      error.response?.data ||
-      error.message ||
-      String(error)
-    );
-  } finally {
-    isH4ReportRunning = false;
-  }
+```
+await runH4ReportOnce();
+
+lastReportKey =
+  check.timeParts.fullKey;
+```
+
+} catch (error) {
+console.error(
+'Gửi H4 report lỗi:',
+error.response?.data ||
+error.message ||
+String(error)
+);
+} finally {
+isH4ReportRunning = false;
+}
 }
 
 export function startH4ReportScheduler() {
-  if (!CONFIG.h4ReportEnabled) {
-    console.log(
-      'H4 report scheduler: OFF'
-    );
+if (!CONFIG.h4ReportEnabled) {
+console.log(
+'H4 report scheduler: OFF'
+);
 
-    return;
-  }
+```
+return;
+```
 
-  console.log(
-    'H4 report scheduler: ON'
-  );
-
-  console.log(
-    `H4 report times: ${(CONFIG.h4ReportTimes || []).join(', ')}`
-  );
-
-  console.log(
-    `H4 report timezone: ${CONFIG.h4ReportTimezone}`
-  );
-
-  console.log(
-    `H4 report channel: ${CONFIG.h4ReportChannelId}`
-  );
-
-  /*
-   * Check mỗi phút để không bị lỡ mốc giờ.
-   */
-  setInterval(
-    async () => {
-      await checkAndSendH4Report();
-    },
-    60 * 1000
-  );
-
-  /*
-   * Check ngay lúc bot vừa start.
-   */
-  checkAndSendH4Report();
 }
+
+console.log(
+'H4 report scheduler: ON'
+);
+
+console.log(
+`H4 report times: ${(CONFIG.h4ReportTimes || []).join(', ')}`
+);
+
+console.log(
+`H4 report timezone: ${CONFIG.h4ReportTimezone}`
+);
+
+console.log(
+`H4 report targets: ${
+      Array.isArray(CONFIG.h4ReportChatIds)
+        ? CONFIG.h4ReportChatIds.length
+        : 0
+    } channel(s)`
+);
+
+/*
+
+* Check mỗi phút để không bị lỡ mốc giờ.
+  */
+  setInterval(
+  async () => {
+  await checkAndSendH4Report();
+  },
+  60 * 1000
+  );
+
+/*
+
+* Check ngay lúc bot vừa start.
+  */
+  checkAndSendH4Report();
+  }
