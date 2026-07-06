@@ -131,13 +131,13 @@ return {
 dateKey:
 `${parts.year}-${parts.month}-${parts.day}`,
 
-```
+
 timeKey:
   `${parts.hour}:${parts.minute}`,
 
 fullKey:
   `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`
-```
+
 
 };
 }
@@ -263,7 +263,7 @@ return {
 symbol:
 snapshot.symbol,
 
-```
+
 interval:
   snapshot.interval,
 
@@ -330,7 +330,7 @@ recentCandles:
     volume:
       candle.volume
   }))
-```
+
 
 };
 }
@@ -356,13 +356,13 @@ Array.isArray(item?.content)
 ? item.content
 : [];
 
-```
+
 for (const block of content) {
   if (typeof block?.text === 'string') {
     parts.push(block.text);
   }
 }
-```
+
 
 }
 
@@ -406,14 +406,14 @@ await client.responses.create({
 model:
 CONFIG.openaiModel,
 
-```
+
   input:
     prompt,
 
   max_output_tokens:
     900
 });
-```
+
 
 const text =
 extractOpenAIText(response);
@@ -440,7 +440,7 @@ current
 ? `${current}\n${paragraph}`
 : paragraph;
 
-```
+
 if (candidate.length <= maxLength) {
   current = candidate;
   continue;
@@ -468,7 +468,7 @@ for (
     )
   );
 }
-```
+
 
 }
 
@@ -510,7 +510,7 @@ return chunks.map((chunk, index) => {
 const isFirst =
 index === 0;
 
-```
+
 const isLast =
   index === chunks.length - 1;
 
@@ -521,7 +521,7 @@ return [
 ]
   .filter(Boolean)
   .join('');
-```
+
 
 });
 }
@@ -541,7 +541,7 @@ url,
 chat_id:
 target.chatId,
 
-```
+
     text,
 
     parse_mode:
@@ -554,7 +554,7 @@ target.chatId,
     timeout: 20000
   }
 );
-```
+
 
 if (!response.data?.ok) {
 throw new Error(
@@ -566,13 +566,13 @@ throw new Error(
 return {
 sent: true,
 
-```
+
 chatId:
   target.chatId,
 
 messageId:
   response.data.result?.message_id
-```
+
 
 };
 }
@@ -590,9 +590,9 @@ target,
 text
 );
 
-```
+
 sentMessages.push(result);
-```
+
 
 }
 
@@ -600,13 +600,13 @@ return {
 chatId:
 target.chatId,
 
-```
+
 sent:
   true,
 
 messages:
   sentMessages
-```
+
 
 };
 }
@@ -639,7 +639,7 @@ settled.map((item, index) => {
 const target =
 targets[index];
 
-```
+
   if (item.status === 'fulfilled') {
     return {
       ok: true,
@@ -670,7 +670,7 @@ targets[index];
       String(item.reason)
   };
 });
-```
+
 
 const successCount =
 results.filter(item => item.ok).length;
@@ -684,7 +684,7 @@ console.log(
 total:
 results.length,
 
-```
+
   success:
     successCount,
 
@@ -693,7 +693,7 @@ results.length,
 
   results
 }
-```
+
 
 );
 
@@ -701,7 +701,7 @@ return {
 total:
 results.length,
 
-```
+
 success:
   successCount,
 
@@ -709,7 +709,7 @@ failed:
   failedCount,
 
 results
-```
+
 
 };
 }
@@ -748,9 +748,9 @@ console.log(
 'H4 report đang chạy, bỏ qua lần check này...'
 );
 
-```
+
 return;
-```
+
 
 }
 
@@ -768,12 +768,12 @@ console.log(
 `Đến giờ gửi H4 report: ${check.timeParts.fullKey}`
 );
 
-```
+
 await runH4ReportOnce();
 
 lastReportKey =
   check.timeParts.fullKey;
-```
+
 
 } catch (error) {
 console.error(
@@ -796,9 +796,7 @@ console.log(
 'H4 report scheduler: OFF'
 );
 
-```
 return;
-```
 
 }
 
