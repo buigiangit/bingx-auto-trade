@@ -97,8 +97,47 @@ const multiTimeframeEnabled = bool(
   'MULTI_TIMEFRAME_ENABLED',
   true
 );
+function list(name, defaultValue = '') {
+return String(process.env[name] || defaultValue)
+.split(',')
+.map(item => item.trim())
+.filter(Boolean);
+}
 
 export const CONFIG = {
+  /*
+
+* =========================
+* H4 REPORT CHANNELS
+*
+* Bộ token/chat id này dùng riêng
+* cho đăng bài phân tích H4.
+*
+* Không dùng chung với:
+* TELEGRAM_BOT_TOKEN
+* TELEGRAM_CHAT_ID
+* của bot AI trade.
+* =========================
+  */
+  h4ReportEnabled:
+  process.env.H4_REPORT_ENABLED === 'true',
+
+h4ReportTimes:
+list(
+'H4_REPORT_TIMES',
+'03:05,07:05,11:05,15:05,19:05,23:05'
+),
+
+h4ReportTimezone:
+process.env.H4_REPORT_TIMEZONE ||
+'Asia/Ho_Chi_Minh',
+
+h4ReportBotTokens:
+list('H4_REPORT_BOT_TOKENS'),
+
+h4ReportChatIds:
+list('H4_REPORT_CHAT_IDS'),
+
   /*
    * =========================
    * OPENAI
