@@ -1,3 +1,4 @@
+js id="dcq2bb"
 import OpenAI from 'openai';
 import { CONFIG } from './config.js';
 
@@ -89,10 +90,6 @@ function safeJson(text) {
   try {
     return JSON.parse(cleaned);
   } catch {
-    /*
-     * Trường hợp model vẫn bọc thêm nội dung
-     * bên ngoài object JSON.
-     */
     const firstBrace =
       cleaned.indexOf('{');
 
@@ -190,10 +187,6 @@ function getClosedCandles(snapshot) {
           candle?.closeTime
         );
 
-      /*
-       * Không có closeTime thì vẫn giữ lại,
-       * tránh làm mất toàn bộ dữ liệu.
-       */
       if (!closeTime) {
         return true;
       }
@@ -202,10 +195,6 @@ function getClosedCandles(snapshot) {
     }
   );
 
-  /*
-   * Nếu API không cung cấp closeTime chuẩn,
-   * quay lại dùng toàn bộ candles.
-   */
   return closedCandles.length >= 20
     ? closedCandles
     : candles;
@@ -292,11 +281,6 @@ function buildTimeframePayload(
 
 /**
  * Lấy giá thị trường gần nhất.
- *
- * Ưu tiên:
- * 1. Giá giữa Bid/Ask
- * 2. Mark Price
- * 3. Giá đóng cửa gần nhất
  */
 function getCurrentPrice(
   multiSnapshot,
@@ -385,9 +369,6 @@ function findRecentSwing(
     return null;
   }
 
-  /*
-   * Tìm pivot gần nhất trước.
-   */
   for (
     let index = candles.length - 2;
     index >= 1;
@@ -442,10 +423,6 @@ function findRecentSwing(
     }
   }
 
-  /*
-   * Không tìm thấy pivot rõ thì dùng
-   * biên cao/thấp của vùng gần nhất.
-   */
   if (direction === 'LONG') {
     const lows = candles
       .map(candle =>
@@ -494,6 +471,49 @@ function appendNote(
 }
 
 /**
+ * Không để WAIT mặc định confidence = 0
+ * trong trường hợp dữ liệu vẫn phân tích được.
+ */
+function normalizeWaitConfidence(
+  confidence,
+  reason,
+  riskNote
+) {
+  const original =
+    clamp(
+      toNumber(confidence, 0),
+      0,
+      100
+    );
+
+  if (original > 0) {
+    return original;
+  }
+
+  const text = `${reason || ''} ${riskNote || ''}`
+    .toLowerCase();
+
+  const hardInvalid =
+    text.includes('không có atr') ||
+    text.includes('không xác định được giá') ||
+    text.includes('không lấy được') ||
+    text.includes('dữ liệu không đủ') ||
+    text.includes('không hợp lệ') ||
+    text.includes('parse') ||
+    text.includes('mâu thuẫn nghiêm trọng');
+
+  if (hardInvalid) {
+    return 0;
+  }
+
+  /*
+   * WAIT bình thường:
+   * thị trường có dữ liệu nhưng setup chưa đẹp.
+   */
+  return 35;
+}
+
+/**
  * Tạo kết quả WAIT chuẩn.
  */
 function createWaitSignal(
@@ -501,15 +521,18 @@ function createWaitSignal(
   confidence = 0,
   riskNote = ''
 ) {
+  const normalizedConfidence =
+    normalizeWaitConfidence(
+      confidence,
+      reason,
+      riskNote
+    );
+
   return {
     signal: 'WAIT',
 
     confidence:
-      clamp(
-        toNumber(confidence, 0),
-        0,
-        100
-      ),
+      normalizedConfidence,
 
     reason:
       String(
@@ -529,10 +552,6 @@ function createWaitSignal(
 
 /**
  * Chuẩn hóa và bảo vệ SL/TP.
- *
- * AI đưa ra ý tưởng giao dịch,
- * nhưng khoảng cách SL/TP cuối cùng
- * được kiểm soát lại bằng code.
  */
 function protectSignalGeometry(
   rawSignal,
@@ -639,10 +658,6 @@ function protectSignalGeometry(
     );
   }
 
-  /*
-   * Vì executor gửi MARKET order,
-   * entry cuối cùng phải gần giá hiện tại.
-   */
   const aiEntry =
     toNumber(rawSignal?.entry);
 
@@ -685,7 +700,7 @@ function protectSignalGeometry(
     Math.max(
       0,
       Number(
-        CONFIG.slAtrMult || 1.8
+        CONFIG.slAtrMult || 1.3
       )
     );
 
@@ -693,7 +708,7 @@ function protectSignalGeometry(
     Math.max(
       0,
       Number(
-        CONFIG.tp1AtrMult || 2.5
+        CONFIG.tp1AtrMult || 1.8
       )
     );
 
@@ -701,7 +716,7 @@ function protectSignalGeometry(
     Math.max(
       0,
       Number(
-        CONFIG.tp2AtrMult || 3.5
+        CONFIG.tp2AtrMult || 2.8
       )
     );
 
@@ -709,7 +724,7 @@ function protectSignalGeometry(
     Math.max(
       0,
       Number(
-        CONFIG.minSlPct || 0.6
+        CONFIG.minSlPct || 0.35
       )
     );
 
@@ -717,7 +732,7 @@ function protectSignalGeometry(
     Math.max(
       0,
       Number(
-        CONFIG.maxSlPct || 1.5
+        CONFIG.maxSlPct || 2.2
       )
     );
 
@@ -725,17 +740,10 @@ function protectSignalGeometry(
     Math.max(
       1,
       Number(
-        CONFIG.minRR || 1.5
+        CONFIG.minRR || 1.2
       )
     );
 
-  /*
-   * Khoảng SL tối thiểu:
-   * - Theo ATR
-   * - Theo % giá
-   *
-   * Chọn khoảng lớn hơn.
-   */
   const atrStopDistance =
     atr * slAtrMult;
 
@@ -768,9 +776,6 @@ function protectSignalGeometry(
     );
   }
 
-  /*
-   * Khoảng SL AI đề xuất.
-   */
   const aiStopLoss =
     toNumber(rawSignal?.stopLoss);
 
@@ -793,10 +798,6 @@ function protectSignalGeometry(
       aiStopLoss - entry;
   }
 
-  /*
-   * Khoảng SL dựa theo swing của
-   * khung xác nhận, có thêm ATR buffer.
-   */
   const swingPrice =
     findRecentSwing(
       confirmSnapshot,
@@ -833,12 +834,6 @@ function protectSignalGeometry(
       ) - entry;
   }
 
-  /*
-   * Không lấy SL ngắn hơn:
-   * - Mức tối thiểu
-   * - SL AI
-   * - Cấu trúc khung xác nhận
-   */
   const stopDistance =
     Math.max(
       minimumStopDistance,
@@ -852,10 +847,6 @@ function protectSignalGeometry(
       entry
     ) * 100;
 
-  /*
-   * Setup cần SL quá rộng thì WAIT,
-   * không tự ép SL lại gần.
-   */
   if (
     stopDistance >
     maximumStopDistance
@@ -870,11 +861,6 @@ function protectSignalGeometry(
     );
   }
 
-  /*
-   * TP1 tối thiểu phải đáp ứng:
-   * - MIN_RR
-   * - TP1_ATR_MULT
-   */
   const minimumTp1Distance =
     Math.max(
       stopDistance * minRR,
@@ -911,9 +897,6 @@ function protectSignalGeometry(
       aiTp1Distance
     );
 
-  /*
-   * TP2 phải xa hơn TP1.
-   */
   const minimumTp2Distance =
     Math.max(
       atr * tp2AtrMult,
@@ -1014,9 +997,6 @@ function protectSignalGeometry(
     );
   }
 
-  /*
-   * Kiểm tra lần cuối sau khi làm tròn.
-   */
   if (
     direction === 'LONG' &&
     !(
@@ -1234,9 +1214,6 @@ async function requestSignal(
       }
     });
   } catch (error) {
-    /*
-     * Fallback cho package/model cũ.
-     */
     if (
       !isStructuredOutputError(error)
     ) {
@@ -1413,7 +1390,7 @@ export async function askAI(snapshot) {
 Phân tích dữ liệu crypto futures đa khung thời gian dưới đây.
 
 VAI TRÒ CÁC KHUNG:
-- Khung xu hướng ${trendInterval}: xác định hướng chính.
+- Khung xu hướng ${trendInterval}: xác định hướng chính nhưng không phải điều kiện chặn cứng tuyệt đối.
 - Khung xác nhận ${confirmInterval}: xác nhận động lượng, cấu trúc, hỗ trợ và kháng cự.
 - Khung entry ${entryInterval}: tìm thời điểm vào lệnh.
 
@@ -1421,26 +1398,36 @@ QUY TẮC QUYẾT ĐỊNH:
 
 1. Chỉ chọn đúng một tín hiệu: LONG, SHORT hoặc WAIT.
 
-2. Không quyết định chỉ dựa trên khung ${entryInterval}.
+2. Không quyết định chỉ dựa trên khung ${entryInterval}, nhưng cũng không được đợi cả ba khung đồng thuận hoàn hảo mới vào lệnh.
 
 3. LONG:
-- Khung ${trendInterval} không được là BEAR hoặc SUPER_BEAR.
-- Khung ${confirmInterval} phải xác nhận tăng, giữ cấu trúc tăng hoặc pullback chưa phá cấu trúc.
+- Ưu tiên khi khung ${trendInterval} là BULL, SUPER_BULL hoặc NEUTRAL nhưng chưa phá cấu trúc tăng.
+- Nếu khung ${trendInterval} là MIXED hoặc BEAR nhẹ nhưng ${confirmInterval} và ${entryInterval} có tín hiệu đảo chiều rõ, vẫn có thể LONG với confidence thấp hơn.
+- Không LONG khi ${trendInterval} là SUPER_BEAR rõ ràng và chưa có dấu hiệu đảo chiều.
+- Khung ${confirmInterval} nên ủng hộ tăng, giữ cấu trúc tăng, hoặc pullback chưa phá cấu trúc.
 - Khung ${entryInterval} phải có điểm vào hợp lý.
+- Với LONG: stopLoss < entry, takeProfit1 > entry, takeProfit2 > takeProfit1.
 
 4. SHORT:
-- Khung ${trendInterval} không được là BULL hoặc SUPER_BULL.
-- Khung ${confirmInterval} phải xác nhận giảm, giữ cấu trúc giảm hoặc hồi lên nhưng chưa phá cấu trúc.
+- Ưu tiên khi khung ${trendInterval} là BEAR, SUPER_BEAR hoặc NEUTRAL nhưng chưa phá cấu trúc giảm.
+- Nếu khung ${trendInterval} là MIXED hoặc BULL nhẹ nhưng ${confirmInterval} và ${entryInterval} có tín hiệu đảo chiều rõ, vẫn có thể SHORT với confidence thấp hơn.
+- Không SHORT khi ${trendInterval} là SUPER_BULL rõ ràng và chưa có dấu hiệu đảo chiều.
+- Khung ${confirmInterval} nên ủng hộ giảm, giữ cấu trúc giảm, hoặc hồi lên nhưng chưa phá cấu trúc.
 - Khung ${entryInterval} phải có điểm vào hợp lý.
+- Với SHORT: stopLoss > entry, takeProfit1 < entry, takeProfit2 < takeProfit1.
 
 5. Chọn WAIT khi:
-- Khung xu hướng và khung xác nhận xung đột mạnh.
-- Khung cao đang MIXED hoặc NEUTRAL nhưng chưa có cấu trúc rõ.
-- Funding, OI, spread hoặc volume không rõ ràng.
-- Entry đã chạy quá xa.
-- SL cần quá rộng.
+- Khung xu hướng và khung xác nhận xung đột rất mạnh.
+- Entry đã chạy quá xa so với vùng hợp lý.
+- SL cần quá rộng so với MAX_SL_PCT.
 - RR không đạt yêu cầu.
-- Dữ liệu không đủ hoặc mâu thuẫn.
+- Spread vượt ngưỡng cấu hình.
+- Funding quá cực đoan và đi ngược hướng lệnh.
+- Dữ liệu giá nến không đủ hoặc mâu thuẫn nghiêm trọng.
+
+Không được WAIT chỉ vì một dữ liệu phụ như Funding, OI hoặc volume chưa rõ. 
+Funding, OI và volume chỉ dùng để giảm confidence, không phải lý do chặn lệnh tuyệt đối.
+Không được WAIT chỉ vì khung ${trendInterval} đang MIXED hoặc NEUTRAL. Nếu ${confirmInterval} và ${entryInterval} có tín hiệu rõ, vẫn có thể LONG hoặc SHORT nhưng giảm confidence.
 
 6. Không được bịa dữ liệu hoặc chỉ báo không có trong input.
 
@@ -1466,7 +1453,18 @@ QUY TẮC QUYẾT ĐỊNH:
 
 10. Confidence:
 - 0 đến 100.
-- Chỉ trên ${CONFIG.minConfidence} khi cả ba khung thực sự hỗ trợ tín hiệu.
+- Confidence là độ tự tin của nhận định hiện tại.
+- Với LONG hoặc SHORT:
+  + 80-95: ba khung đồng thuận rõ, entry tốt, RR tốt.
+  + 70-79: xu hướng chính rõ, khung xác nhận ủng hộ, entry chấp nhận được.
+  + 60-69: có tín hiệu nhưng chưa thật mạnh.
+  + Dưới 60: không nên vào lệnh.
+- Với WAIT:
+  + 40-60: thị trường có xu hướng nhưng entry chưa đẹp hoặc khung còn lệch nhẹ.
+  + 20-39: thị trường nhiễu, thiếu đồng thuận.
+  + 0-19: dữ liệu thiếu, mâu thuẫn mạnh hoặc không thể phân tích.
+- Không được mặc định confidence = 0 chỉ vì chọn WAIT.
+- Chỉ trả confidence = 0 khi dữ liệu không hợp lệ hoặc không đủ dữ liệu phân tích.
 - Không tăng confidence chỉ vì một khung có RSI quá mua hoặc quá bán.
 
 11. Reason phải ngắn gọn nhưng đề cập trạng thái của:
