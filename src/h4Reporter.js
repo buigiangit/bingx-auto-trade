@@ -24,6 +24,54 @@ apiKey: CONFIG.openaiApiKey
 return openaiClient;
 }
 
+function listFromValue(value, defaultValue = '') {
+if (Array.isArray(value)) {
+return value
+.map(item => String(item).trim())
+.filter(Boolean);
+}
+
+return String(value || defaultValue)
+.split(',')
+.map(item => item.trim())
+.filter(Boolean);
+}
+
+function getReportConfig() {
+const enabled =
+CONFIG.h4ReportEnabled === true ||
+process.env.H4_REPORT_ENABLED === 'true';
+
+const times = listFromValue(
+CONFIG.h4ReportTimes,
+process.env.H4_REPORT_TIMES ||
+'03:05,07:05,11:05,15:05,19:05,23:05'
+);
+
+const timezone =
+CONFIG.h4ReportTimezone ||
+process.env.H4_REPORT_TIMEZONE ||
+'Asia/Ho_Chi_Minh';
+
+const botTokens = listFromValue(
+CONFIG.h4ReportBotTokens,
+process.env.H4_REPORT_BOT_TOKENS || ''
+);
+
+const chatIds = listFromValue(
+CONFIG.h4ReportChatIds,
+process.env.H4_REPORT_CHAT_IDS || ''
+);
+
+return {
+enabled,
+times,
+timezone,
+botTokens,
+chatIds
+};
+}
+
 function escapeHtml(value) {
 return String(value ?? '')
 .replaceAll('&', '&')
@@ -54,23 +102,20 @@ return `${value.slice(0, 6)}...${value.slice(-4)}`;
 }
 
 function getVietnamTimeParts(date = new Date()) {
+const reportConfig = getReportConfig();
+
 const formatter = new Intl.DateTimeFormat(
 'en-CA',
 {
-timeZone:
-CONFIG.h4ReportTimezone ||
-'Asia/Ho_Chi_Minh',
-
-```
-  year: 'numeric',
-  month: '2-digit',
-  day: '2-digit',
-  hour: '2-digit',
-  minute: '2-digit',
-  hour12: false
+timeZone: reportConfig.timezone,
+year: 'numeric',
+month: '2-digit',
+day: '2-digit',
+hour: '2-digit',
+minute: '2-digit',
+hour12: false,
+hourCycle: 'h23'
 }
-```
-
 );
 
 const parts = Object.fromEntries(
@@ -98,20 +143,16 @@ fullKey:
 }
 
 function shouldSendH4ReportNow() {
-if (!CONFIG.h4ReportEnabled) {
+const reportConfig = getReportConfig();
+
+if (!reportConfig.enabled) {
 return {
 shouldSend: false,
 reason: 'H4_REPORT_ENABLED=false'
 };
 }
 
-const times = Array.isArray(
-CONFIG.h4ReportTimes
-)
-? CONFIG.h4ReportTimes
-: [];
-
-if (times.length === 0) {
+if (reportConfig.times.length === 0) {
 return {
 shouldSend: false,
 reason: 'Chưa cấu hình H4_REPORT_TIMES'
@@ -122,7 +163,7 @@ const timeParts =
 getVietnamTimeParts();
 
 const matched =
-times.includes(
+reportConfig.times.includes(
 timeParts.timeKey
 );
 
@@ -153,17 +194,13 @@ timeParts
 }
 
 function buildReportTargets() {
-const tokens = Array.isArray(
-CONFIG.h4ReportBotTokens
-)
-? CONFIG.h4ReportBotTokens
-: [];
+const reportConfig = getReportConfig();
 
-const chatIds = Array.isArray(
-CONFIG.h4ReportChatIds
-)
-? CONFIG.h4ReportChatIds
-: [];
+const tokens =
+reportConfig.botTokens;
+
+const chatIds =
+reportConfig.chatIds;
 
 if (tokens.length === 0) {
 throw new Error(
@@ -179,7 +216,6 @@ throw new Error(
 
 /*
 
-* Trường hợp 1:
 * 1 bot đăng nhiều channel.
   */
   if (tokens.length === 1) {
@@ -193,7 +229,6 @@ throw new Error(
 
 /*
 
-* Trường hợp 2:
 * token 1 -> chat id 1
 * token 2 -> chat id 2
   */
@@ -300,6 +335,40 @@ recentCandles:
 };
 }
 
+function extractOpenAIText(response) {
+if (
+typeof response?.output_text === 'string' &&
+response.output_text.trim()
+) {
+return response.output_text.trim();
+}
+
+const output =
+Array.isArray(response?.output)
+? response.output
+: [];
+
+const parts = [];
+
+for (const item of output) {
+const content =
+Array.isArray(item?.content)
+? item.content
+: [];
+
+```
+for (const block of content) {
+  if (typeof block?.text === 'string') {
+    parts.push(block.text);
+  }
+}
+```
+
+}
+
+return parts.join('\n').trim();
+}
+
 async function generateH4Article(snapshot) {
 const client =
 getOpenAIClient();
@@ -326,6 +395,7 @@ Yêu cầu bài viết:
 10. Không dùng markdown bảng.
 11. Có thể dùng emoji vừa phải.
 12. Viết như bài đăng channel Telegram cho cộng đồng trader.
+13. Độ dài tối đa khoảng 2.500 ký tự.
 
 Dữ liệu thị trường:
 ${JSON.stringify(market)}
@@ -341,13 +411,12 @@ CONFIG.openaiModel,
     prompt,
 
   max_output_tokens:
-    1200
+    900
 });
 ```
 
 const text =
-response.output_text ||
-'';
+extractOpenAIText(response);
 
 if (!text.trim()) {
 throw new Error(
@@ -358,7 +427,61 @@ throw new Error(
 return text.trim();
 }
 
-function buildTelegramMessage(
+function splitTextByLength(text, maxLength = 2600) {
+const paragraphs = String(text || '')
+.split('\n');
+
+const chunks = [];
+let current = '';
+
+for (const paragraph of paragraphs) {
+const candidate =
+current
+? `${current}\n${paragraph}`
+: paragraph;
+
+```
+if (candidate.length <= maxLength) {
+  current = candidate;
+  continue;
+}
+
+if (current) {
+  chunks.push(current);
+  current = '';
+}
+
+if (paragraph.length <= maxLength) {
+  current = paragraph;
+  continue;
+}
+
+for (
+  let index = 0;
+  index < paragraph.length;
+  index += maxLength
+) {
+  chunks.push(
+    paragraph.slice(
+      index,
+      index + maxLength
+    )
+  );
+}
+```
+
+}
+
+if (current) {
+chunks.push(current);
+}
+
+return chunks.length > 0
+? chunks
+: [text];
+}
+
+function buildTelegramMessages(
 article,
 snapshot
 ) {
@@ -380,11 +503,27 @@ const footer = [
 '<i>Thông tin chỉ mang tính tham khảo, không phải lời khuyên đầu tư.</i>'
 ].join('\n');
 
-return (
-header +
-escapeHtml(article) +
-footer
-);
+const chunks =
+splitTextByLength(article, 2600);
+
+return chunks.map((chunk, index) => {
+const isFirst =
+index === 0;
+
+```
+const isLast =
+  index === chunks.length - 1;
+
+return [
+  isFirst ? header : '',
+  escapeHtml(chunk),
+  isLast ? footer : ''
+]
+  .filter(Boolean)
+  .join('');
+```
+
+});
 }
 
 async function sendTelegramMessage(
@@ -438,6 +577,40 @@ messageId:
 };
 }
 
+async function sendArticleToTarget(
+target,
+messages
+) {
+const sentMessages = [];
+
+for (const text of messages) {
+const result =
+await sendTelegramMessage(
+target,
+text
+);
+
+```
+sentMessages.push(result);
+```
+
+}
+
+return {
+chatId:
+target.chatId,
+
+```
+sent:
+  true,
+
+messages:
+  sentMessages
+```
+
+};
+}
+
 async function sendH4ArticleToAllChannels(
 article,
 snapshot
@@ -445,8 +618,8 @@ snapshot
 const targets =
 buildReportTargets();
 
-const text =
-buildTelegramMessage(
+const messages =
+buildTelegramMessages(
 article,
 snapshot
 );
@@ -454,9 +627,9 @@ snapshot
 const settled =
 await Promise.allSettled(
 targets.map(target =>
-sendTelegramMessage(
+sendArticleToTarget(
 target,
-text
+messages
 )
 )
 );
@@ -615,7 +788,10 @@ isH4ReportRunning = false;
 }
 
 export function startH4ReportScheduler() {
-if (!CONFIG.h4ReportEnabled) {
+const reportConfig =
+getReportConfig();
+
+if (!reportConfig.enabled) {
 console.log(
 'H4 report scheduler: OFF'
 );
@@ -631,35 +807,23 @@ console.log(
 );
 
 console.log(
-`H4 report times: ${(CONFIG.h4ReportTimes || []).join(', ')}`
+`H4 report times: ${reportConfig.times.join(', ')}`
 );
 
 console.log(
-`H4 report timezone: ${CONFIG.h4ReportTimezone}`
+`H4 report timezone: ${reportConfig.timezone}`
 );
 
 console.log(
-`H4 report targets: ${
-      Array.isArray(CONFIG.h4ReportChatIds)
-        ? CONFIG.h4ReportChatIds.length
-        : 0
-    } channel(s)`
+`H4 report targets: ${reportConfig.chatIds.length} channel(s)`
 );
 
-/*
+setInterval(
+async () => {
+await checkAndSendH4Report();
+},
+60 * 1000
+);
 
-* Check mỗi phút để không bị lỡ mốc giờ.
-  */
-  setInterval(
-  async () => {
-  await checkAndSendH4Report();
-  },
-  60 * 1000
-  );
-
-/*
-
-* Check ngay lúc bot vừa start.
-  */
-  checkAndSendH4Report();
-  }
+checkAndSendH4Report();
+}
