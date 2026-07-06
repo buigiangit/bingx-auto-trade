@@ -304,6 +304,31 @@ export const CONFIG = {
 
   minSecondsBetweenDca:
     num('MIN_SECONDS_BETWEEN_DCA', 1800),
+    /*
+   * =========================
+   * H4 REPORT
+   * =========================
+   */
+  h4ReportEnabled:
+    process.env.H4_REPORT_ENABLED === 'true',
+
+  h4ReportTimes:
+    String(
+      process.env.H4_REPORT_TIMES ||
+      '03:05,07:05,11:05,15:05,19:05,23:05'
+    )
+      .split(',')
+      .map(item => item.trim())
+      .filter(Boolean),
+
+  h4ReportTimezone:
+    process.env.H4_REPORT_TIMEZONE ||
+    'Asia/Ho_Chi_Minh',
+
+  h4ReportChannelId:
+    process.env.H4_REPORT_CHANNEL_ID ||
+    process.env.TELEGRAM_CHAT_ID ||
+    '',
 
   /*
    * =========================
