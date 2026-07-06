@@ -396,6 +396,7 @@ Yêu cầu bài viết:
 11. Có thể dùng emoji vừa phải.
 12. Viết như bài đăng channel Telegram cho cộng đồng trader.
 13. Độ dài tối đa khoảng 2.500 ký tự.
+14. Bôi đậm các mục phân tích, bôi đầm phần tựa đề, phần tóm tắt kết luận.
 
 Dữ liệu thị trường:
 ${JSON.stringify(market)}
