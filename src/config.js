@@ -105,10 +105,8 @@ return String(process.env[name] || defaultValue)
 }
 
 export const CONFIG = {
-  /*
-/*
 
-* =========================
+/* =========================
 * ENTRY 2
 * =========================
   */
