@@ -147,7 +147,7 @@ bool('ONLY_SIGNAL_ON_NEW_CANDLE', true),
 signalGuardBlockOrder:
 bool('SIGNAL_GUARD_BLOCK_ORDER', true),
 
-* =========================
+/* =========================
 * H4 REPORT CHANNELS
 *
 * Bộ token/chat id này dùng riêng
