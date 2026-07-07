@@ -3,9 +3,9 @@ import { CONFIG } from './config.js';
 
 function escapeHtml(value) {
   return String(value ?? '')
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;');
+    .replaceAll('&', '&')
+    .replaceAll('<', '<')
+    .replaceAll('>', '>');
 }
 
 function formatNumber(value, digits = 4) {
@@ -20,6 +20,25 @@ function formatNumber(value, digits = 4) {
   });
 }
 
+function formatEntry2(value) {
+  const number = Number(value);
+
+  if (!Number.isFinite(number) || number <= 0) {
+    return 'Chờ hồi về vùng đẹp';
+  }
+
+  return formatNumber(number, 8);
+}
+
+function getDisplayInterval(snapshot) {
+  return (
+    snapshot?.interval ||
+    CONFIG.entryInterval ||
+    CONFIG.interval ||
+    'N/A'
+  );
+}
+
 function buildCommunitySignalMessage(
   decision,
   snapshot
@@ -27,15 +46,19 @@ function buildCommunitySignalMessage(
   const signal = decision.signal;
   const isDca = decision.isDca === true;
 
-  const isLong = signal.signal === 'LONG';
+  const direction =
+    String(signal.signal || '').toUpperCase();
+
+  const isLong =
+    direction === 'LONG';
 
   const directionIcon = isLong
     ? '🔵'
     : '🔴';
 
   const title = isDca
-    ? `${directionIcon} <b>DCA ${escapeHtml(signal.signal)}</b>`
-    : `${directionIcon} <b>LỆNH ${escapeHtml(signal.signal)}</b>`;
+    ? `${directionIcon} <b>DCA ${escapeHtml(direction)}</b>`
+    : `${directionIcon} <b>LỆNH ${escapeHtml(direction)}</b>`;
 
   const funding =
     snapshot?.premium?.lastFundingRate ??
@@ -49,14 +72,26 @@ function buildCommunitySignalMessage(
     ? 'DCA'
     : 'Entry mới';
 
+  const entry1 =
+    signal.entry1 ??
+    signal.entry;
+
+  const entry2 =
+    signal.entry2;
+
+  const entry2Label = isLong
+    ? 'Entry 2 - hỗ trợ đẹp'
+    : 'Entry 2 - kháng cự đẹp';
+
   return [
     title,
     '',
     `📌 <b>Symbol:</b> ${escapeHtml(CONFIG.symbol)}`,
-    `⏱ <b>Khung:</b> ${escapeHtml(CONFIG.interval)}`,
-    `📊 <b>Loại:</b> ${typeText}`,
+    `⏱ <b>Khung entry:</b> ${escapeHtml(getDisplayInterval(snapshot))}`,
+    `📊 <b>Loại:</b> ${escapeHtml(typeText)}`,
     '',
-    `📍 <b>Entry:</b> ${formatNumber(signal.entry, 8)}`,
+    `📍 <b>Entry 1:</b> ${formatNumber(entry1, 8)}`,
+    `📍 <b>${escapeHtml(entry2Label)}:</b> ${formatEntry2(entry2)}`,
     `🛑 <b>Stop Loss:</b> ${formatNumber(signal.stopLoss, 8)}`,
     `✅ <b>TP1:</b> ${formatNumber(signal.takeProfit1, 8)}`,
     `✅ <b>TP2:</b> ${formatNumber(signal.takeProfit2, 8)}`,
@@ -74,7 +109,7 @@ function buildCommunitySignalMessage(
     `🧠 <b>Lý do:</b> ${escapeHtml(signal.reason || '')}`,
     `⚠️ <b>Lưu ý:</b> ${escapeHtml(signal.riskNote || '')}`,
     '',
-    '<i>Thông tin chỉ mang tính tham khảo, không phải lời khuyên đầu tư.</i>'
+    '<b><i>Thông tin chỉ mang tính tham khảo, không phải lời khuyên đầu tư.</i></b>'
   ].join('\n');
 }
 
