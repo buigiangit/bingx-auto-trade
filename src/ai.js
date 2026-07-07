@@ -88,7 +88,7 @@ function safeJson(text) {
   const cleaned = raw
     .replace(/^`json\s*/i, '')
     .replace(/^`\s*/i, '')
-    .replace(/\s*```$/i, '')
+    .replace(/\s*$/i, '')
     .trim();
 
   try {
@@ -97,7 +97,7 @@ function safeJson(text) {
     const firstBrace =
       cleaned.indexOf('{');
 
-    ```
+    
 const lastBrace =
   cleaned.lastIndexOf('}');
 
@@ -116,7 +116,7 @@ if (
 throw new Error(
   `Không parse được JSON từ OpenAI: ${ cleaned } `
 );
-```
+
 
   }
 }
@@ -144,7 +144,7 @@ function extractOutputText(response) {
       ? item.content
       : [];
 
-    ```
+    
 for (const content of contents) {
   if (
     typeof content?.text === 'string'
@@ -152,7 +152,7 @@ for (const content of contents) {
     textParts.push(content.text);
   }
 }
-```
+
 
   }
 
@@ -199,14 +199,14 @@ function getClosedCandles(snapshot) {
           candle?.closeTime
         );
 
-      ```
+      
   if (!closeTime) {
     return true;
   }
 
   return closeTime <= now;
 }
-```
+
 
 );
 
@@ -396,7 +396,7 @@ function findRecentSwing(
     const previous =
       candles[index - 1];
 
-    ```
+    
 const current =
   candles[index];
 
@@ -441,7 +441,7 @@ if (direction === 'SHORT') {
     return high;
   }
 }
-```
+
 
   }
 
@@ -457,11 +457,11 @@ if (direction === 'SHORT') {
           low < entry
       );
 
-    ```
+    
 return lows.length > 0
   ? Math.min(...lows)
   : null;
-```
+
 
   }
 
@@ -554,7 +554,7 @@ function getRecentHighLowLevels(snapshot) {
             value > 0
         ),
 
-```
+
 lows:
   candles
     .map(candle =>
@@ -565,7 +565,7 @@ lows:
         Number.isFinite(value) &&
         value > 0
     )
-```
+
 
 };
 }
@@ -588,7 +588,7 @@ function getSupportResistanceLevels(
       indicators.support
     ),
 
-    ```
+    
 ...extractLevelNumbers(
   indicators.supports
 ),
@@ -606,7 +606,7 @@ function getSupportResistanceLevels(
 ),
 
 ...candleLevels.lows
-```
+
 
   ];
 
@@ -615,7 +615,7 @@ function getSupportResistanceLevels(
       indicators.resistance
     ),
 
-    ```
+    
 ...extractLevelNumbers(
   indicators.resistances
 ),
@@ -633,7 +633,7 @@ function getSupportResistanceLevels(
 ),
 
 ...candleLevels.highs
-```
+
 
   ];
 
@@ -644,13 +644,13 @@ function getSupportResistanceLevels(
       )
     ],
 
-```
+
 resistances: [
   ...new Set(
     resistances.filter(Number.isFinite)
   )
 ]
-```
+
 
 };
 }
@@ -678,14 +678,14 @@ function isValidEntry2({
     const distance =
       entry1 - entry2;
 
-    ```
+    
 return (
   entry2 < entry1 &&
   entry2 > stopLoss &&
   distance >= minDistance &&
   distance <= maxDistance
 );
-```
+
 
   }
 
@@ -693,14 +693,14 @@ return (
     const distance =
       entry2 - entry1;
 
-    ```
+    
 return (
   entry2 > entry1 &&
   entry2 < stopLoss &&
   distance >= minDistance &&
   distance <= maxDistance
 );
-```
+
 
   }
 
@@ -817,7 +817,7 @@ function pickEntry2FromHigherTimeframes({
         source: 'support_confirm'
       })),
 
-      ```
+      
   ...trendLevels.supports.map(level => ({
     level,
     source: 'support_trend'
@@ -838,7 +838,7 @@ function pickEntry2FromHigherTimeframes({
       Math.abs(entry1 - a.level) -
       Math.abs(entry1 - b.level)
   );
-```
+
 
 }
 
@@ -849,7 +849,7 @@ function pickEntry2FromHigherTimeframes({
         source: 'resistance_confirm'
       })),
 
-      ```
+      
   ...trendLevels.resistances.map(level => ({
     level,
     source: 'resistance_trend'
@@ -870,7 +870,7 @@ function pickEntry2FromHigherTimeframes({
       Math.abs(entry1 - a.level) -
       Math.abs(entry1 - b.level)
   );
-```
+
 
 }
 
@@ -888,11 +888,11 @@ function pickEntry2FromHigherTimeframes({
           pricePrecision
         ),
 
-```
+
   source:
     pickedLevel.source
 };
-```
+
 
   }
 
@@ -921,11 +921,11 @@ function pickEntry2FromHigherTimeframes({
           pricePrecision
         ),
 
-```
+
   source:
     'ai_entry2'
 };
-```
+
 
   }
 
@@ -967,7 +967,7 @@ function pickEntry2FromHigherTimeframes({
     const entry2 =
       entry1 - fallbackDistance;
 
-    ```
+    
 if (
   isValidEntry2({
     direction,
@@ -989,7 +989,7 @@ if (
       'atr_fallback'
   };
 }
-```
+
 
   }
 
@@ -997,7 +997,7 @@ if (
     const entry2 =
       entry1 + fallbackDistance;
 
-    ```
+    
 if (
   isValidEntry2({
     direction,
@@ -1019,7 +1019,7 @@ if (
       'atr_fallback'
   };
 }
-```
+
 
   }
 
@@ -1104,7 +1104,7 @@ function createWaitSignal(
   return {
     signal: 'WAIT',
 
-```
+
 confidence:
   normalizedConfidence,
 
@@ -1124,7 +1124,7 @@ takeProfit2: null,
 
 riskNote:
   String(riskNote || '')
-```
+
 
 };
 }
@@ -1274,7 +1274,7 @@ function protectSignalGeometry(
         currentPrice
       ) * 100;
 
-    ```
+    
 if (
   aiEntryDistancePct >
   maxEntryDistancePct
@@ -1284,7 +1284,7 @@ if (
     `Entry AI lệch ${ aiEntryDistancePct.toFixed(2) }%, đã dùng giá thị trường`
   );
 }
-```
+
 
   }
 
@@ -1547,7 +1547,7 @@ if (
       pricePrecision
     );
 
-    ```
+    
 takeProfit1 = roundPrice(
   entry + tp1Distance,
   pricePrecision
@@ -1557,7 +1557,7 @@ takeProfit2 = roundPrice(
   entry + tp2Distance,
   pricePrecision
 );
-```
+
 
   } else {
     stopLoss = roundPrice(
@@ -1565,7 +1565,7 @@ takeProfit2 = roundPrice(
       pricePrecision
     );
 
-    ```
+    
 takeProfit1 = roundPrice(
   entry - tp1Distance,
   pricePrecision
@@ -1575,7 +1575,7 @@ takeProfit2 = roundPrice(
   entry - tp2Distance,
   pricePrecision
 );
-```
+
 
   }
 
@@ -1689,7 +1689,7 @@ takeProfit2 = roundPrice(
     signal:
       direction,
 
-```
+
 confidence,
 
 reason:
@@ -1711,7 +1711,7 @@ takeProfit1,
 takeProfit2,
 
 riskNote
-```
+
 
 };
 }
@@ -1735,7 +1735,7 @@ const SIGNAL_JSON_SCHEMA = {
       ]
     },
 
-```
+
 confidence: {
   type: 'number'
 },
@@ -1789,7 +1789,7 @@ takeProfit2: {
 riskNote: {
   type: 'string'
 }
-```
+
 
 },
 
@@ -1854,7 +1854,7 @@ async function requestSignal(
     return await client.responses.create({
       ...baseRequest,
 
-```
+
   text: {
     format: {
       type:
@@ -1871,7 +1871,7 @@ async function requestSignal(
     }
   }
 });
-```
+
 
 } catch (error) {
     if (
@@ -1880,7 +1880,7 @@ async function requestSignal(
       throw error;
     }
 
-    ```
+    
 console.warn(
   'Structured Outputs không dùng được, chuyển sang JSON text mode.'
 );
@@ -1888,7 +1888,7 @@ console.warn(
 return client.responses.create(
   baseRequest
 );
-```
+
 
   }
 }
@@ -1957,7 +1957,7 @@ export async function askAI(snapshot) {
       snapshot?.symbol ||
       CONFIG.symbol,
 
-```
+
 strategy: {
   entryInterval,
   confirmInterval,
@@ -2064,7 +2064,7 @@ riskConfiguration: {
     process.env.ENTRY2_MIN_DISTANCE_PCT ??
     0.15
 }
-```
+
 
 };
 
