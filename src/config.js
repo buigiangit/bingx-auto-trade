@@ -106,6 +106,48 @@ return String(process.env[name] || defaultValue)
 
 export const CONFIG = {
   /*
+/*
+
+* =========================
+* ENTRY 2
+* =========================
+  */
+  entry2AtrMult:
+  num('ENTRY2_ATR_MULT', 0.6),
+
+entry2MaxDistancePct:
+num('ENTRY2_MAX_DISTANCE_PCT', 0.6),
+
+entry2MinDistancePct:
+num('ENTRY2_MIN_DISTANCE_PCT', 0.15),
+
+entry2MaxStopRatio:
+num('ENTRY2_MAX_STOP_RATIO', 0.65),
+
+/*
+
+* =========================
+* SIGNAL GUARD
+* Chống spam call kèo cộng đồng
+* =========================
+  */
+  minSecondsBetweenSignals:
+  num('MIN_SECONDS_BETWEEN_SIGNALS', 1800),
+
+minSignalPriceMovePct:
+num('MIN_SIGNAL_PRICE_MOVE_PCT', 0.35),
+
+signalExpireSeconds:
+num('SIGNAL_EXPIRE_SECONDS', 7200),
+
+blockSameDirectionSignal:
+bool('BLOCK_SAME_DIRECTION_SIGNAL', true),
+
+onlySignalOnNewCandle:
+bool('ONLY_SIGNAL_ON_NEW_CANDLE', true),
+
+signalGuardBlockOrder:
+bool('SIGNAL_GUARD_BLOCK_ORDER', true),
 
 * =========================
 * H4 REPORT CHANNELS
