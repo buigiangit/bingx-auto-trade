@@ -104,7 +104,22 @@ return String(process.env[name] || defaultValue)
 .filter(Boolean);
 }
 
-export const CONFIG = {
+export const CONFIG = { 
+  /*
+   * =========================
+   * TELEGRAM CDT TRADE
+   * Dùng riêng để call kèo vào group CDT
+   * Không liên quan bot FBT và H4 Reporter
+   * =========================
+   */
+  cdtTelegramEnabled:
+    bool('CDT_TELEGRAM_ENABLED', false),
+
+  cdtTelegramBotToken:
+    process.env.CDT_TELEGRAM_BOT_TOKEN || '',
+
+  cdtTelegramChatId:
+    process.env.CDT_TELEGRAM_CHAT_ID || '',
 
 /* =========================
 * ENTRY 2
