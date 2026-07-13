@@ -5,6 +5,10 @@ import {
 } from './market.js';
 
 import {
+  sendTradeEventToTelegram
+} from './telegram.js';
+
+import {
   isTradeRepositoryEnabled,
   getActiveTrades,
   markTradeEntry2Hit,
@@ -173,8 +177,12 @@ function normalizeCandle(
     high,
     low,
     close,
+
     volume:
-      toNumber(candle?.volume, 0)
+      toNumber(
+        candle?.volume,
+        0
+      )
   };
 }
 
@@ -212,6 +220,76 @@ function normalizeCandles(
         a.openTime -
         b.openTime
     );
+}
+
+/**
+ * Gửi thông báo event Telegram.
+ *
+ * Telegram lỗi không được phép
+ * làm trade monitor dừng.
+ */
+async function notifyTradeEvent(
+  trade,
+  eventType,
+  details = {}
+) {
+  if (!trade?.id) {
+    return {
+      sent: false,
+      reason:
+        'Thiếu trade để gửi Telegram event'
+    };
+  }
+
+  try {
+    const result =
+      await sendTradeEventToTelegram(
+        trade,
+        eventType,
+        details
+      );
+
+    console.log(
+      `Telegram trade event ${eventType}:`,
+      {
+        tradeId:
+          trade.id,
+
+        symbol:
+          trade.symbol,
+
+        sent:
+          result?.sent === true,
+
+        fbt:
+          result?.fbt?.sent === true,
+
+        cdt:
+          result?.cdt?.sent === true
+      }
+    );
+
+    return result;
+  } catch (error) {
+    const errorMessage =
+      error.response?.data
+        ?.description ||
+      error.response?.data ||
+      error.message ||
+      String(error);
+
+    console.error(
+      `Gửi Telegram event ${eventType} ` +
+      `cho trade #${trade.id} lỗi:`,
+      errorMessage
+    );
+
+    return {
+      sent: false,
+      error:
+        errorMessage
+    };
+  }
 }
 
 /**
@@ -271,7 +349,7 @@ function isFinalTrade(trade) {
 }
 
 /**
- * Kiểm tra các mốc giá mà nến đã chạm.
+ * Kiểm tra các mốc giá nến đã chạm.
  */
 function getCandleTouches(
   trade,
@@ -280,13 +358,19 @@ function getCandleTouches(
   const direction =
     String(
       trade.direction || ''
-    ).toUpperCase();
+    )
+      .trim()
+      .toUpperCase();
 
   const entry2 =
-    toNumber(trade.entry2);
+    toNumber(
+      trade.entry2
+    );
 
   const stopLoss =
-    toNumber(trade.stop_loss);
+    toNumber(
+      trade.stop_loss
+    );
 
   const takeProfit1 =
     toNumber(
@@ -347,7 +431,7 @@ function getCandleTouches(
 }
 
 /**
- * Metadata chung để lưu cùng event.
+ * Metadata chung lưu cùng event.
  */
 function buildCandleMetadata(
   candle,
@@ -383,6 +467,49 @@ function buildCandleMetadata(
 }
 
 /**
+ * Chi tiết Telegram lấy từ nến.
+ */
+function buildTelegramDetails(
+  candle,
+  eventPrice,
+  extra = {}
+) {
+  return {
+    eventPrice,
+
+    eventTime:
+      candle?.closeTime
+        ? new Date(
+            candle.closeTime
+          )
+        : new Date(),
+
+    candleInterval:
+      CONFIG.tradeMonitorCandleInterval,
+
+    candleOpenTime:
+      candle?.openTime,
+
+    candleCloseTime:
+      candle?.closeTime,
+
+    candleOpen:
+      candle?.open,
+
+    candleHigh:
+      candle?.high,
+
+    candleLow:
+      candle?.low,
+
+    candleClose:
+      candle?.close,
+
+    ...extra
+  };
+}
+
+/**
  * Đánh dấu Entry 2 nếu giá đã chạm.
  */
 async function processEntry2Touch(
@@ -411,6 +538,10 @@ async function processEntry2Touch(
       )
     );
 
+  const currentTrade =
+    updatedTrade ||
+    trade;
+
   console.log(
     `Trade #${trade.id} chạm Entry 2`,
     {
@@ -425,15 +556,24 @@ async function processEntry2Touch(
     }
   );
 
-  return (
-    updatedTrade ||
-    trade
+  await notifyTradeEvent(
+    currentTrade,
+    'ENTRY2_HIT',
+    buildTelegramDetails(
+      candle,
+      trade.entry2,
+      {
+        detectedBy:
+          'TRADE_MONITOR'
+      }
+    )
   );
+
+  return currentTrade;
 }
 
 /**
- * Xử lý trường hợp cùng một nến
- * chạm cả TP và SL.
+ * Xử lý cùng một nến chạm TP và SL.
  */
 async function processAmbiguousCandle(
   trade,
@@ -444,7 +584,9 @@ async function processAmbiguousCandle(
     String(
       CONFIG.ambiguousCandlePolicy ||
       'SL_FIRST'
-    ).toUpperCase();
+    )
+      .trim()
+      .toUpperCase();
 
   const metadata =
     buildCandleMetadata(
@@ -476,13 +618,39 @@ async function processAmbiguousCandle(
         metadata
       );
 
+    const currentTrade =
+      updatedTrade ||
+      trade;
+
     console.log(
       `Trade #${trade.id} chạm TP và SL cùng nến: tính SL trước`
     );
 
+    await notifyTradeEvent(
+      currentTrade,
+      'SL_HIT',
+      buildTelegramDetails(
+        candle,
+        trade.stop_loss,
+        {
+          ambiguous:
+            true,
+
+          policy:
+            'SL_FIRST',
+
+          touchedTakeProfit1:
+            touches.takeProfit1,
+
+          touchedTakeProfit2:
+            touches.takeProfit2
+        }
+      )
+    );
+
     return {
       trade:
-        updatedTrade || trade,
+        currentTrade,
 
       closed:
         true,
@@ -493,8 +661,8 @@ async function processAmbiguousCandle(
   }
 
   /*
-   * Nếu nến chạm TP2:
-   * TP_FIRST sẽ tính TP2 trước và đóng trade.
+   * TP_FIRST và nến chạm TP2:
+   * tính TP2 trước, đóng trade.
    */
   if (touches.takeProfit2) {
     const updatedTrade =
@@ -504,13 +672,36 @@ async function processAmbiguousCandle(
         metadata
       );
 
+    const currentTrade =
+      updatedTrade ||
+      trade;
+
     console.log(
       `Trade #${trade.id} chạm TP2 và SL cùng nến: tính TP2 trước`
     );
 
+    await notifyTradeEvent(
+      currentTrade,
+      'TP2_HIT',
+      buildTelegramDetails(
+        candle,
+        trade.take_profit2,
+        {
+          ambiguous:
+            true,
+
+          policy:
+            'TP_FIRST',
+
+          touchedStopLoss:
+            true
+        }
+      )
+    );
+
     return {
       trade:
-        updatedTrade || trade,
+        currentTrade,
 
       closed:
         true,
@@ -521,40 +712,84 @@ async function processAmbiguousCandle(
   }
 
   /*
-   * Nến chỉ chạm TP1 và SL:
+   * TP_FIRST nhưng chỉ chạm TP1 và SL:
    * ghi TP1 trước, sau đó ghi SL.
-   *
-   * Outcome sẽ là TP1_THEN_SL.
    */
-  let updatedTrade =
+  let currentTrade =
     trade;
 
   if (
     !trade.tp1_hit_at &&
     touches.takeProfit1
   ) {
-    updatedTrade =
+    const tp1Trade =
       await markTradeTp1(
         trade.id,
         trade.take_profit1,
         metadata
-      ) || updatedTrade;
+      );
+
+    currentTrade =
+      tp1Trade ||
+      currentTrade;
+
+    await notifyTradeEvent(
+      currentTrade,
+      'TP1_HIT',
+      buildTelegramDetails(
+        candle,
+        trade.take_profit1,
+        {
+          ambiguous:
+            true,
+
+          policy:
+            'TP_FIRST',
+
+          touchedStopLoss:
+            true
+        }
+      )
+    );
   }
 
-  updatedTrade =
+  const stoppedTrade =
     await markTradeStopLoss(
       trade.id,
       trade.stop_loss,
       metadata
-    ) || updatedTrade;
+    );
+
+  currentTrade =
+    stoppedTrade ||
+    currentTrade;
 
   console.log(
     `Trade #${trade.id} chạm TP1 và SL cùng nến: tính TP1 trước`
   );
 
+  await notifyTradeEvent(
+    currentTrade,
+    'SL_HIT',
+    buildTelegramDetails(
+      candle,
+      trade.stop_loss,
+      {
+        ambiguous:
+          true,
+
+        policy:
+          'TP_FIRST',
+
+        reachedTp1BeforeStop:
+          true
+      }
+    )
+  );
+
   return {
     trade:
-      updatedTrade,
+      currentTrade,
 
     closed:
       true,
@@ -622,6 +857,10 @@ async function processTradeCandle(
         )
       );
 
+    currentTrade =
+      updatedTrade ||
+      currentTrade;
+
     console.log(
       `Trade #${currentTrade.id} SL`,
       {
@@ -633,9 +872,21 @@ async function processTradeCandle(
       }
     );
 
+    await notifyTradeEvent(
+      currentTrade,
+      'SL_HIT',
+      buildTelegramDetails(
+        candle,
+        currentTrade.stop_loss,
+        {
+          detectedBy:
+            'TRADE_MONITOR'
+        }
+      )
+    );
+
     return {
       trade:
-        updatedTrade ||
         currentTrade,
 
       closed:
@@ -649,7 +900,7 @@ async function processTradeCandle(
   /*
    * Chạm TP2.
    *
-   * Repository sẽ tự ghi TP1 nếu TP1
+   * Repository tự ghi TP1 nếu TP1
    * chưa được ghi trước đó.
    */
   if (touches.takeProfit2) {
@@ -666,6 +917,10 @@ async function processTradeCandle(
         )
       );
 
+    currentTrade =
+      updatedTrade ||
+      currentTrade;
+
     console.log(
       `Trade #${currentTrade.id} TP2`,
       {
@@ -677,9 +932,21 @@ async function processTradeCandle(
       }
     );
 
+    await notifyTradeEvent(
+      currentTrade,
+      'TP2_HIT',
+      buildTelegramDetails(
+        candle,
+        currentTrade.take_profit2,
+        {
+          detectedBy:
+            'TRADE_MONITOR'
+        }
+      )
+    );
+
     return {
       trade:
-        updatedTrade ||
         currentTrade,
 
       closed:
@@ -723,6 +990,19 @@ async function processTradeCandle(
         takeProfit1:
           currentTrade.take_profit1
       }
+    );
+
+    await notifyTradeEvent(
+      currentTrade,
+      'TP1_HIT',
+      buildTelegramDetails(
+        candle,
+        currentTrade.take_profit1,
+        {
+          detectedBy:
+            'TRADE_MONITOR'
+        }
+      )
     );
 
     return {
@@ -796,12 +1076,11 @@ function getTradeCandles(
       }
 
       /*
-       * Chỉ bắt đầu từ cây nến đầy đủ
-       * sau thời điểm call lệnh.
+       * Chỉ dùng cây nến bắt đầu
+       * sau khi tín hiệu được tạo.
        *
-       * Tránh trường hợp giá đã chạm
-       * TP/SL trước lúc bot call nhưng
-       * vẫn nằm trong cùng cây nến.
+       * Tránh tính TP/SL đã xảy ra
+       * trước thời điểm bot call.
        */
       if (
         openedAt &&
@@ -812,7 +1091,7 @@ function getTradeCandles(
       }
 
       /*
-       * Không tính các nến đóng sau
+       * Không dùng nến đóng sau
        * thời điểm trade hết hạn.
        */
       if (
@@ -844,8 +1123,12 @@ async function monitorSingleTrade(
       allCandles
     );
 
-  let aggregateHigh = null;
-  let aggregateLow = null;
+  let aggregateHigh =
+    null;
+
+  let aggregateLow =
+    null;
+
   let lastProcessedCandleTime =
     toNumber(
       currentTrade
@@ -894,7 +1177,9 @@ async function monitorSingleTrade(
 
     if (
       result.closed ||
-      isFinalTrade(currentTrade)
+      isFinalTrade(
+        currentTrade
+      )
     ) {
       break;
     }
@@ -902,7 +1187,7 @@ async function monitorSingleTrade(
 
   /*
    * Lưu nến cuối đã kiểm tra và
-   * MFE/MAE để đánh giá chất lượng AI.
+   * MFE/MAE để đánh giá AI.
    */
   if (
     aggregateHigh !== null ||
@@ -926,12 +1211,13 @@ async function monitorSingleTrade(
           lastCheckedCandleTime:
             lastProcessedCandleTime
         }
-      ) || currentTrade;
+      ) ||
+      currentTrade;
   }
 
   /*
-   * Nếu trade chưa TP2/SL nhưng đã
-   * quá thời gian hiệu lực thì đóng EXPIRED.
+   * Trade chưa TP2/SL nhưng
+   * đã quá thời gian hiệu lực.
    */
   const expireAt =
     getTradeExpireAt(
@@ -939,26 +1225,31 @@ async function monitorSingleTrade(
     );
 
   if (
-    !isFinalTrade(currentTrade) &&
+    !isFinalTrade(
+      currentTrade
+    ) &&
     expireAt &&
     Date.now() >= expireAt
   ) {
     const latestCandle =
       allCandles.at(-1);
 
+    const currentPrice =
+      latestCandle?.close;
+
     currentTrade =
       await markTradeExpired(
         currentTrade.id,
         {
-          currentPrice:
-            latestCandle?.close,
+          currentPrice,
 
           expireAt,
 
           detectedBy:
             'TRADE_MONITOR'
         }
-      ) || currentTrade;
+      ) ||
+      currentTrade;
 
     events.push(
       'EXPIRED'
@@ -966,6 +1257,23 @@ async function monitorSingleTrade(
 
     console.log(
       `Trade #${currentTrade.id} đã hết hạn`
+    );
+
+    await notifyTradeEvent(
+      currentTrade,
+      'EXPIRED',
+      {
+        eventPrice:
+          currentPrice,
+
+        eventTime:
+          new Date(),
+
+        expireAt,
+
+        detectedBy:
+          'TRADE_MONITOR'
+      }
     );
   }
 
@@ -1039,6 +1347,7 @@ export async function runTradeMonitorOnce() {
   ) {
     return {
       skipped: true,
+
       reason:
         'TRADE_MONITOR_ENABLED=false'
     };
@@ -1049,6 +1358,7 @@ export async function runTradeMonitorOnce() {
   ) {
     return {
       skipped: true,
+
       reason:
         'Trade database chưa được bật'
     };
@@ -1057,6 +1367,7 @@ export async function runTradeMonitorOnce() {
   if (monitorRunning) {
     return {
       skipped: true,
+
       reason:
         'Trade monitor đang chạy'
     };
@@ -1082,13 +1393,14 @@ export async function runTradeMonitorOnce() {
 
     /*
      * Nhóm trade theo symbol để mỗi
-     * symbol chỉ gọi API nến một lần.
+     * symbol chỉ gọi API một lần.
      */
     const tradesBySymbol =
       new Map();
 
     for (
-      const trade of activeTrades
+      const trade of
+      activeTrades
     ) {
       if (
         !tradesBySymbol.has(
@@ -1112,7 +1424,8 @@ export async function runTradeMonitorOnce() {
       const [
         symbol,
         symbolTrades
-      ] of tradesBySymbol.entries()
+      ] of
+      tradesBySymbol.entries()
     ) {
       try {
         const candles =
@@ -1121,7 +1434,8 @@ export async function runTradeMonitorOnce() {
           );
 
         for (
-          const trade of symbolTrades
+          const trade of
+          symbolTrades
         ) {
           try {
             const result =
@@ -1135,15 +1449,19 @@ export async function runTradeMonitorOnce() {
               ...result
             });
           } catch (error) {
-            console.error(
-              `Monitor trade #${trade.id} lỗi:`,
+            const errorMessage =
               error.response?.data ||
               error.message ||
-              String(error)
+              String(error);
+
+            console.error(
+              `Monitor trade #${trade.id} lỗi:`,
+              errorMessage
             );
 
             results.push({
               ok: false,
+
               tradeId:
                 trade.id,
 
@@ -1151,34 +1469,35 @@ export async function runTradeMonitorOnce() {
                 trade.symbol,
 
               error:
-                error.response?.data ||
-                error.message ||
-                String(error)
+                errorMessage
             });
           }
         }
       } catch (error) {
-        console.error(
-          `Lấy dữ liệu monitor ${symbol} lỗi:`,
+        const errorMessage =
           error.response?.data ||
           error.message ||
-          String(error)
+          String(error);
+
+        console.error(
+          `Lấy dữ liệu monitor ${symbol} lỗi:`,
+          errorMessage
         );
 
         for (
-          const trade of symbolTrades
+          const trade of
+          symbolTrades
         ) {
           results.push({
             ok: false,
+
             tradeId:
               trade.id,
 
             symbol,
 
             error:
-              error.response?.data ||
-              error.message ||
-              String(error)
+              errorMessage
           });
         }
       }
@@ -1193,7 +1512,9 @@ export async function runTradeMonitorOnce() {
           result.events.length > 0
       );
 
-    if (eventResults.length > 0) {
+    if (
+      eventResults.length > 0
+    ) {
       console.log(
         'Trade monitor events:',
         eventResults
@@ -1226,6 +1547,7 @@ export function startTradeMonitor() {
 
     return {
       started: false,
+
       reason:
         'TRADE_MONITOR_ENABLED=false'
     };
@@ -1240,6 +1562,7 @@ export function startTradeMonitor() {
 
     return {
       started: false,
+
       reason:
         'Trade database chưa bật'
     };
@@ -1248,6 +1571,7 @@ export function startTradeMonitor() {
   if (monitorTimer) {
     return {
       started: false,
+
       reason:
         'Trade monitor đã chạy'
     };
@@ -1309,11 +1633,13 @@ export function startTradeMonitor() {
             );
           });
       },
-      intervalSeconds * 1000
+      intervalSeconds *
+      1000
     );
 
   return {
     started: true,
+
     intervalSeconds
   };
 }
@@ -1325,6 +1651,7 @@ export function stopTradeMonitor() {
   if (!monitorTimer) {
     return {
       stopped: false,
+
       reason:
         'Trade monitor chưa chạy'
     };
