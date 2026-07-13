@@ -2063,6 +2063,7 @@ QUY TẮC:
 13. Funding, OI và volume chỉ là dữ liệu hỗ trợ để điều chỉnh confidence; lớp risk của hệ thống sẽ kiểm tra ngưỡng cứng riêng.
 14. Reason phải ngắn gọn và đề cập trạng thái ${trendInterval}, ${confirmInterval}, ${entryInterval}.
 15. Khi WAIT: entry, entry1, entry2, stopLoss, takeProfit1, takeProfit2 đều phải là null.
+16. Toàn bộ nội dung trong reason và riskNote bắt buộc viết bằng tiếng Việt có dấu. Các thuật ngữ kỹ thuật như LONG, SHORT, WAIT, BULL, BEAR, RSI, ATR, RR, Entry, SL, TP1 và TP2 có thể giữ nguyên.
 
 Chỉ trả JSON đúng cấu trúc:
 {
