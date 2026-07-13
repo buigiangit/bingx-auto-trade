@@ -13,6 +13,22 @@ function n(value, fallback = null) {
 }
 
 /**
+ * Chuyển timestamp giây hoặc mili giây
+ * về mili giây.
+ */
+function normalizeTimestamp(value) {
+  const timestamp = n(value);
+
+  if (!Number.isFinite(timestamp)) {
+    return null;
+  }
+
+  return timestamp < 1_000_000_000_000
+    ? timestamp * 1000
+    : timestamp;
+}
+
+/**
  * Làm sạch tên interval.
  */
 function normalizeInterval(
@@ -27,17 +43,77 @@ function normalizeInterval(
 }
 
 /**
+ * Chuyển interval thành mili giây.
+ */
+function intervalToMilliseconds(interval) {
+  const normalized =
+    normalizeInterval(
+      interval,
+      '1m'
+    );
+
+  const match =
+    normalized.match(
+      /^(\d+)(m|h|d|w|M)$/
+    );
+
+  if (!match) {
+    return 60 * 1000;
+  }
+
+  const amount =
+    Number(match[1]);
+
+  const unit =
+    match[2];
+
+  const unitMilliseconds = {
+    m:
+      60 * 1000,
+
+    h:
+      60 * 60 * 1000,
+
+    d:
+      24 * 60 * 60 * 1000,
+
+    w:
+      7 * 24 * 60 * 60 * 1000,
+
+    M:
+      30 * 24 * 60 * 60 * 1000
+  };
+
+  return (
+    amount *
+    unitMilliseconds[unit]
+  );
+}
+
+/**
+ * Lấy phần data nếu response
+ * vẫn còn wrapper.
+ */
+function unwrapData(value) {
+  return value?.data ?? value;
+}
+
+/**
  * Loại bỏ interval trùng nhau.
  */
 function uniqueIntervals(intervals) {
   return [
     ...new Set(
-      (Array.isArray(intervals)
-        ? intervals
-        : []
+      (
+        Array.isArray(intervals)
+          ? intervals
+          : []
       )
         .map(interval =>
-          normalizeInterval(interval, '')
+          normalizeInterval(
+            interval,
+            ''
+          )
         )
         .filter(Boolean)
     )
@@ -45,7 +121,7 @@ function uniqueIntervals(intervals) {
 }
 
 /**
- * Lấy danh sách khung thời gian cần phân tích.
+ * Lấy danh sách khung cần phân tích.
  */
 function getConfiguredIntervals() {
   const entryInterval =
@@ -54,15 +130,18 @@ function getConfiguredIntervals() {
     '15m';
 
   if (!CONFIG.multiTimeframeEnabled) {
-    return [entryInterval];
+    return [
+      entryInterval
+    ];
   }
 
-  const intervals = uniqueIntervals([
-    entryInterval,
-    CONFIG.confirmInterval,
-    CONFIG.trendInterval,
-    ...(CONFIG.intervals || [])
-  ]);
+  const intervals =
+    uniqueIntervals([
+      entryInterval,
+      CONFIG.confirmInterval,
+      CONFIG.trendInterval,
+      ...(CONFIG.intervals || [])
+    ]);
 
   return intervals.length > 0
     ? intervals
@@ -70,12 +149,154 @@ function getConfiguredIntervals() {
 }
 
 /**
- * Lấy dữ liệu nến của một khung thời gian.
+ * Chuẩn hóa một cây nến BingX.
  *
- * Ví dụ:
- * getKlines('BTC-USDT', '15m', 240)
- * getKlines('BTC-USDT', '1h', 240)
- * getKlines('BTC-USDT', '4h', 240)
+ * Hỗ trợ cả object và array.
+ */
+function normalizeKline(
+  kline,
+  intervalMilliseconds
+) {
+  const isArray =
+    Array.isArray(kline);
+
+  const openTime =
+    normalizeTimestamp(
+      isArray
+        ? kline[0]
+        : (
+            kline?.openTime ??
+            kline?.time ??
+            kline?.timestamp
+          )
+    );
+
+  const open =
+    n(
+      isArray
+        ? kline[1]
+        : kline?.open
+    );
+
+  const high =
+    n(
+      isArray
+        ? kline[2]
+        : kline?.high
+    );
+
+  const low =
+    n(
+      isArray
+        ? kline[3]
+        : kline?.low
+    );
+
+  const close =
+    n(
+      isArray
+        ? kline[4]
+        : kline?.close
+    );
+
+  const volume =
+    n(
+      isArray
+        ? kline[5]
+        : kline?.volume,
+      0
+    );
+
+  const explicitCloseTime =
+    normalizeTimestamp(
+      isArray
+        ? kline[6]
+        : (
+            kline?.closeTime ??
+            kline?.endTime
+          )
+    );
+
+  const inferredCloseTime =
+    Number.isFinite(openTime)
+      ? (
+          openTime +
+          intervalMilliseconds -
+          1
+        )
+      : null;
+
+  /*
+   * Chỉ dùng closeTime API nếu
+   * giá trị hợp lý.
+   */
+  const closeTimeIsValid =
+    Number.isFinite(
+      explicitCloseTime
+    ) &&
+    Number.isFinite(
+      openTime
+    ) &&
+    explicitCloseTime >=
+      openTime &&
+    explicitCloseTime <=
+      (
+        openTime +
+        intervalMilliseconds * 2
+      );
+
+  const closeTime =
+    closeTimeIsValid
+      ? explicitCloseTime
+      : inferredCloseTime;
+
+  const quoteVolume =
+    n(
+      isArray
+        ? kline[7]
+        : (
+            kline?.quoteVolume ??
+            kline?.quoteAssetVolume
+          )
+    );
+
+  if (
+    !Number.isFinite(openTime) ||
+    !Number.isFinite(closeTime) ||
+    !Number.isFinite(open) ||
+    !Number.isFinite(high) ||
+    !Number.isFinite(low) ||
+    !Number.isFinite(close) ||
+    high < low
+  ) {
+    return null;
+  }
+
+  return {
+    /*
+     * Giữ cả hai trường:
+     *
+     * tradeMonitor.js dùng openTime.
+     * Code cũ có thể dùng time.
+     */
+    openTime,
+
+    time:
+      openTime,
+
+    closeTime,
+
+    open,
+    high,
+    low,
+    close,
+    volume,
+    quoteVolume
+  };
+}
+
+/**
+ * Lấy dữ liệu nến của một khung.
  */
 export async function getKlines(
   symbol = CONFIG.symbol,
@@ -84,90 +305,87 @@ export async function getKlines(
     CONFIG.interval,
   limit = CONFIG.limit
 ) {
+  const normalizedSymbol =
+    String(
+      symbol ||
+      CONFIG.symbol ||
+      ''
+    ).trim();
+
+  if (!normalizedSymbol) {
+    throw new Error(
+      'Symbol lấy nến không được để trống'
+    );
+  }
+
   const normalizedInterval =
     normalizeInterval(
       interval,
-      CONFIG.interval || '15m'
+      CONFIG.interval ||
+      '15m'
     );
 
-  const normalizedLimit = Math.max(
-    1,
-    Number(limit) || 240
-  );
+  const normalizedLimit =
+    Math.max(
+      1,
+      Math.min(
+        1000,
+        Math.floor(
+          Number(limit) ||
+          240
+        )
+      )
+    );
 
-  const data = await fetchPublic(
-    '/openApi/swap/v3/quote/klines',
-    {
-      symbol,
-      interval: normalizedInterval,
-      limit: normalizedLimit
-    }
-  );
+  const response =
+    await fetchPublic(
+      '/openApi/swap/v3/quote/klines',
+      {
+        symbol:
+          normalizedSymbol,
 
-  if (!Array.isArray(data)) {
+        interval:
+          normalizedInterval,
+
+        limit:
+          normalizedLimit
+      }
+    );
+
+  const source =
+    unwrapData(response);
+
+  if (!Array.isArray(source)) {
     throw new Error(
       `Kline response ${normalizedInterval} không phải array`
     );
   }
 
-  const candles = data
-    .map(kline => ({
-      time: n(
-        kline?.[0] ??
-        kline?.time
-      ),
-
-      open: n(
-        kline?.[1] ??
-        kline?.open
-      ),
-
-      high: n(
-        kline?.[2] ??
-        kline?.high
-      ),
-
-      low: n(
-        kline?.[3] ??
-        kline?.low
-      ),
-
-      close: n(
-        kline?.[4] ??
-        kline?.close
-      ),
-
-      volume: n(
-        kline?.[5] ??
-        kline?.volume
-      ),
-
-      closeTime: n(
-        kline?.[6] ??
-        kline?.closeTime
-      ),
-
-      quoteVolume: n(
-        kline?.[7] ??
-        kline?.quoteVolume
-      )
-    }))
-    .filter(candle => {
-      return (
-        Number.isFinite(candle.time) &&
-        Number.isFinite(candle.open) &&
-        Number.isFinite(candle.high) &&
-        Number.isFinite(candle.low) &&
-        Number.isFinite(candle.close)
-      );
-    })
-    .sort(
-      (a, b) => a.time - b.time
+  const intervalMilliseconds =
+    intervalToMilliseconds(
+      normalizedInterval
     );
+
+  const candles =
+    source
+      .map(kline =>
+        normalizeKline(
+          kline,
+          intervalMilliseconds
+        )
+      )
+      .filter(Boolean)
+      .sort(
+        (a, b) =>
+          a.openTime -
+          b.openTime
+      );
 
   if (candles.length === 0) {
     throw new Error(
-      `Không lấy được nến hợp lệ cho ${symbol} ${normalizedInterval}`
+      `Không lấy được nến hợp lệ cho ` +
+      `${normalizedSymbol} ` +
+      `${normalizedInterval}`
     );
   }
 
@@ -175,71 +393,122 @@ export async function getKlines(
 }
 
 /**
- * Lấy Mark Price, Index Price và Funding hiện tại.
+ * Lấy Mark Price, Index Price
+ * và Funding hiện tại.
  */
 export async function getPremiumIndex(
   symbol = CONFIG.symbol
 ) {
-  const data = await fetchPublic(
-    '/openApi/swap/v2/quote/premiumIndex',
-    { symbol }
-  );
+  const response =
+    await fetchPublic(
+      '/openApi/swap/v2/quote/premiumIndex',
+      {
+        symbol
+      }
+    );
 
-  const item = Array.isArray(data)
-    ? data[0]
-    : data;
+  const source =
+    unwrapData(response);
+
+  const item =
+    Array.isArray(source)
+      ? source[0]
+      : source;
 
   return {
     symbol:
-      item?.symbol || symbol,
+      item?.symbol ||
+      symbol,
 
     markPrice:
-      n(item?.markPrice),
+      n(
+        item?.markPrice
+      ),
 
     indexPrice:
-      n(item?.indexPrice),
+      n(
+        item?.indexPrice
+      ),
 
     lastFundingRate:
-      n(item?.lastFundingRate),
+      n(
+        item?.lastFundingRate
+      ),
 
     nextFundingTime:
-      n(item?.nextFundingTime),
+      normalizeTimestamp(
+        item?.nextFundingTime
+      ),
 
     time:
-      n(item?.time)
+      normalizeTimestamp(
+        item?.time
+      )
   };
 }
 
 /**
- * Lấy lịch sử Funding Rate gần nhất.
+ * Lấy Funding Rate gần nhất.
  */
 export async function getFundingRate(
   symbol = CONFIG.symbol
 ) {
-  const data = await fetchPublic(
-    '/openApi/swap/v2/quote/fundingRate',
-    {
-      symbol,
-      limit: 5
-    }
-  );
+  const response =
+    await fetchPublic(
+      '/openApi/swap/v2/quote/fundingRate',
+      {
+        symbol,
+        limit: 5
+      }
+    );
 
-  const item = Array.isArray(data)
-    ? data.at(-1)
-    : data;
+  const source =
+    unwrapData(response);
+
+  const items =
+    Array.isArray(source)
+      ? source
+      : source
+        ? [source]
+        : [];
+
+  const item =
+    items
+      .filter(Boolean)
+      .sort(
+        (a, b) =>
+          (
+            normalizeTimestamp(
+              a?.fundingTime
+            ) || 0
+          ) -
+          (
+            normalizeTimestamp(
+              b?.fundingTime
+            ) || 0
+          )
+      )
+      .at(-1);
 
   return {
     symbol:
-      item?.symbol || symbol,
+      item?.symbol ||
+      symbol,
 
     fundingRate:
-      n(item?.fundingRate),
+      n(
+        item?.fundingRate
+      ),
 
     fundingTime:
-      n(item?.fundingTime),
+      normalizeTimestamp(
+        item?.fundingTime
+      ),
 
     nextFundingTime:
-      n(item?.nextFundingTime)
+      normalizeTimestamp(
+        item?.nextFundingTime
+      )
   };
 }
 
@@ -249,23 +518,36 @@ export async function getFundingRate(
 export async function getOpenInterest(
   symbol = CONFIG.symbol
 ) {
-  const data = await fetchPublic(
-    '/openApi/swap/v2/quote/openInterest',
-    { symbol }
-  );
+  const response =
+    await fetchPublic(
+      '/openApi/swap/v2/quote/openInterest',
+      {
+        symbol
+      }
+    );
+
+  const source =
+    unwrapData(response);
 
   const item =
-    data?.data ?? data;
+    Array.isArray(source)
+      ? source[0]
+      : source;
 
   return {
     symbol:
-      item?.symbol || symbol,
+      item?.symbol ||
+      symbol,
 
     openInterest:
-      n(item?.openInterest),
+      n(
+        item?.openInterest
+      ),
 
     time:
-      n(item?.time)
+      normalizeTimestamp(
+        item?.time
+      )
   };
 }
 
@@ -276,54 +558,79 @@ export async function getOrderBookSpread(
   symbol = CONFIG.symbol
 ) {
   try {
-    const data = await fetchPublic(
-      '/openApi/swap/v2/quote/depth',
-      {
-        symbol,
-        limit: 5
-      }
-    );
+    const response =
+      await fetchPublic(
+        '/openApi/swap/v2/quote/depth',
+        {
+          symbol,
+          limit: 5
+        }
+      );
 
     const item =
-      data?.data ?? data;
+      unwrapData(response);
 
     const bids =
-      Array.isArray(item?.bids)
+      Array.isArray(
+        item?.bids
+      )
         ? item.bids
         : [];
 
     const asks =
-      Array.isArray(item?.asks)
+      Array.isArray(
+        item?.asks
+      )
         ? item.asks
         : [];
 
-    const bestBid = Array.isArray(bids[0])
-      ? n(bids[0][0])
-      : n(
-          bids[0]?.price ??
-          bids[0]?.p
-        );
+    const bestBid =
+      Array.isArray(
+        bids[0]
+      )
+        ? n(
+            bids[0][0]
+          )
+        : n(
+            bids[0]?.price ??
+            bids[0]?.p
+          );
 
-    const bestAsk = Array.isArray(asks[0])
-      ? n(asks[0][0])
-      : n(
-          asks[0]?.price ??
-          asks[0]?.p
-        );
+    const bestAsk =
+      Array.isArray(
+        asks[0]
+      )
+        ? n(
+            asks[0][0]
+          )
+        : n(
+            asks[0]?.price ??
+            asks[0]?.p
+          );
 
     const mid =
-      Number.isFinite(bestBid) &&
-      Number.isFinite(bestAsk) &&
+      Number.isFinite(
+        bestBid
+      ) &&
+      Number.isFinite(
+        bestAsk
+      ) &&
       bestBid > 0 &&
       bestAsk > 0
-        ? (bestBid + bestAsk) / 2
+        ? (
+            bestBid +
+            bestAsk
+          ) / 2
         : null;
 
     const spreadPct =
       Number.isFinite(mid) &&
       mid > 0
         ? (
-            (bestAsk - bestBid) /
+            (
+              bestAsk -
+              bestBid
+            ) /
             mid
           ) * 100
         : null;
@@ -349,7 +656,8 @@ export async function getOrderBookSpread(
     console.log(
       'Không lấy được order book depth:',
       error.response?.data ||
-      error.message
+      error.message ||
+      String(error)
     );
 
     return {
@@ -369,27 +677,33 @@ export async function getOrderBookSpread(
 export async function getContract(
   symbol = CONFIG.symbol
 ) {
-  const data = await fetchPublic(
-    '/openApi/swap/v2/quote/contracts',
-    { symbol }
-  );
+  const response =
+    await fetchPublic(
+      '/openApi/swap/v2/quote/contracts',
+      {
+        symbol
+      }
+    );
 
   const source =
-    data?.data ?? data;
+    unwrapData(response);
 
-  const item = Array.isArray(source)
-    ? (
-        source.find(
-          contract =>
-            contract.symbol === symbol
-        ) ||
-        source[0]
-      )
-    : source;
+  const item =
+    Array.isArray(source)
+      ? (
+          source.find(
+            contract =>
+              contract?.symbol ===
+              symbol
+          ) ||
+          source[0]
+        )
+      : source;
 
   return {
     symbol:
-      item?.symbol || symbol,
+      item?.symbol ||
+      symbol,
 
     quantityPrecision:
       n(
@@ -444,8 +758,8 @@ export async function getContract(
 /**
  * Lấy các dữ liệu chung.
  *
- * Những dữ liệu này không cần gọi lại
- * cho từng khung thời gian.
+ * Các dữ liệu này chỉ cần gọi một lần
+ * cho toàn bộ timeframe.
  */
 export async function getCommonMarketData(
   symbol = CONFIG.symbol
@@ -457,11 +771,25 @@ export async function getCommonMarketData(
     book,
     contract
   ] = await Promise.all([
-    getPremiumIndex(symbol),
-    getFundingRate(symbol),
-    getOpenInterest(symbol),
-    getOrderBookSpread(symbol),
-    getContract(symbol)
+    getPremiumIndex(
+      symbol
+    ),
+
+    getFundingRate(
+      symbol
+    ),
+
+    getOpenInterest(
+      symbol
+    ),
+
+    getOrderBookSpread(
+      symbol
+    ),
+
+    getContract(
+      symbol
+    )
   ]);
 
   return {
@@ -474,13 +802,7 @@ export async function getCommonMarketData(
 }
 
 /**
- * Chế độ tương thích code cũ.
- *
- * Có thể gọi:
- *
- * buildMarketSnapshot()
- * buildMarketSnapshot('1h')
- * buildMarketSnapshot('4h')
+ * Chế độ một timeframe.
  */
 export async function buildMarketSnapshot(
   interval =
@@ -490,7 +812,8 @@ export async function buildMarketSnapshot(
   const normalizedInterval =
     normalizeInterval(
       interval,
-      CONFIG.interval || '15m'
+      CONFIG.interval ||
+      '15m'
     );
 
   const [
@@ -536,11 +859,6 @@ export async function buildMarketSnapshot(
 
 /**
  * Xây dựng dữ liệu đa khung.
- *
- * Funding, OI, Spread và Contract
- * chỉ được gọi một lần.
- *
- * Nến của tất cả các khung được gọi song song.
  */
 export async function buildMultiTimeframeSnapshot() {
   const intervals =
@@ -591,8 +909,12 @@ export async function buildMultiTimeframeSnapshot() {
   const timeframes =
     Object.fromEntries(
       timeframeEntries.map(
-        ([interval, candles]) => [
+        ([
           interval,
+          candles
+        ]) => [
+          interval,
+
           {
             symbol:
               CONFIG.symbol,
@@ -621,8 +943,12 @@ export async function buildMultiTimeframeSnapshot() {
     );
 
   const entrySnapshot =
-    timeframes[entryInterval] ||
-    timeframes[intervals[0]];
+    timeframes[
+      entryInterval
+    ] ||
+    timeframes[
+      intervals[0]
+    ];
 
   if (!entrySnapshot) {
     throw new Error(
@@ -635,7 +961,8 @@ export async function buildMultiTimeframeSnapshot() {
       CONFIG.symbol,
 
     multiTimeframeEnabled:
-      CONFIG.multiTimeframeEnabled === true,
+      CONFIG.multiTimeframeEnabled ===
+      true,
 
     intervals,
 
@@ -647,10 +974,6 @@ export async function buildMultiTimeframeSnapshot() {
 
     timeframes,
 
-    /*
-     * Dữ liệu chung đặt ngoài timeframes
-     * để ai.js và index.js dễ sử dụng.
-     */
     premium:
       common.premium,
 
@@ -667,8 +990,9 @@ export async function buildMultiTimeframeSnapshot() {
       common.contract,
 
     /*
-     * Giữ sẵn dữ liệu khung entry
-     * để tương thích khi cần.
+     * Giữ khung Entry ở top-level
+     * để ai.js, index.js, executor.js
+     * tiếp tục sử dụng.
      */
     interval:
       entrySnapshot.interval,
