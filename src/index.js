@@ -1,27 +1,68 @@
-import { CONFIG } from './config.js';
+import {
+  CONFIG,
+  assertSafeEnvironment
+} from './config.js';
+
 import {
   buildMarketSnapshot,
   buildMultiTimeframeSnapshot
 } from './market.js';
-import { addIndicators } from './indicators.js';
-import { askAI } from './ai.js';
-import { validateAndSize } from './risk.js';
-import { executeDecision } from './executor.js';
-import { logJson } from './logger.js';
+
+import {
+  addIndicators
+} from './indicators.js';
+
+import {
+  askAI
+} from './ai.js';
+
+import {
+  validateAndSize
+} from './risk.js';
+
+import {
+  executeDecision
+} from './executor.js';
+
+import {
+  logJson
+} from './logger.js';
+
 import {
   startH4ReportScheduler
 } from './h4Reporter.js';
 
-const args = new Set(process.argv.slice(2));
+import {
+  initializeDatabase,
+  closeDatabase,
+  isDatabaseEnabled
+} from './db.js';
+
+import {
+  startTradeMonitor,
+  stopTradeMonitor,
+  runTradeMonitorOnce
+} from './tradeMonitor.js';
+
+const args =
+  new Set(
+    process.argv.slice(2)
+  );
 
 const allowVstOrder =
   args.has('--allow-vst-order');
 
+const runOnceMode =
+  args.has('--once');
+
 let isRunning = false;
+let isShuttingDown = false;
 let runCount = 0;
+let loopTimer = null;
 
 /**
- * Chuyển snapshot của một khung thành dữ liệu log gọn.
+ * Chuyển snapshot của một khung
+ * thành dữ liệu log gọn.
  */
 function summarizeTimeframe(snapshot) {
   const indicators =
@@ -29,43 +70,56 @@ function summarizeTimeframe(snapshot) {
 
   return {
     symbol:
-      snapshot?.symbol || CONFIG.symbol,
+      snapshot?.symbol ||
+      CONFIG.symbol,
 
     interval:
-      snapshot?.interval || null,
+      snapshot?.interval ||
+      null,
 
     price:
-      indicators.lastClose ?? null,
+      indicators.lastClose ??
+      null,
 
     trend:
-      indicators.trend ?? null,
+      indicators.trend ??
+      null,
 
     ema34:
-      indicators.ema34 ?? null,
+      indicators.ema34 ??
+      null,
 
     ema89:
-      indicators.ema89 ?? null,
+      indicators.ema89 ??
+      null,
 
     ema200:
-      indicators.ema200 ?? null,
+      indicators.ema200 ??
+      null,
 
     rsi14:
-      indicators.rsi14 ?? null,
+      indicators.rsi14 ??
+      null,
 
     macd:
-      indicators.macd ?? null,
+      indicators.macd ??
+      null,
 
     atr14:
-      indicators.atr14 ?? null,
+      indicators.atr14 ??
+      null,
 
     volume:
-      indicators.volume ?? null,
+      indicators.volume ??
+      null,
 
     support:
-      indicators.support ?? null,
+      indicators.support ??
+      null,
 
     resistance:
-      indicators.resistance ?? null
+      indicators.resistance ??
+      null
   };
 }
 
@@ -75,7 +129,7 @@ function summarizeTimeframe(snapshot) {
 async function buildAnalyzedMultiTimeframeSnapshot() {
   /*
    * Nếu tắt multi timeframe,
-   * bot vẫn chạy theo cơ chế một khung cũ.
+   * bot vẫn chạy theo một khung.
    */
   if (!CONFIG.multiTimeframeEnabled) {
     const raw =
@@ -88,7 +142,8 @@ async function buildAnalyzedMultiTimeframeSnapshot() {
       addIndicators(raw);
 
     return {
-      multiTimeframeEnabled: false,
+      multiTimeframeEnabled:
+        false,
 
       symbol:
         entrySnapshot.symbol,
@@ -112,6 +167,7 @@ async function buildAnalyzedMultiTimeframeSnapshot() {
       },
 
       entrySnapshot,
+
       confirmSnapshot:
         entrySnapshot,
 
@@ -119,8 +175,7 @@ async function buildAnalyzedMultiTimeframeSnapshot() {
         entrySnapshot,
 
       /*
-       * Các trường bên dưới giúp tương thích
-       * với ai.js cũ đang đọc snapshot.indicators.
+       * Tương thích code một khung cũ.
        */
       interval:
         entrySnapshot.interval,
@@ -149,26 +204,33 @@ async function buildAnalyzedMultiTimeframeSnapshot() {
   }
 
   /*
-   * Lấy dữ liệu nến của toàn bộ khung.
+   * Lấy dữ liệu nến toàn bộ khung.
    */
   const rawMulti =
     await buildMultiTimeframeSnapshot();
 
   /*
-   * Tính indicator riêng cho từng khung.
+   * Tính indicator riêng từng khung.
    */
   const analyzedTimeframeEntries =
     Object.entries(
       rawMulti.timeframes || {}
-    ).map(([interval, rawSnapshot]) => {
-      const analyzedSnapshot =
-        addIndicators(rawSnapshot);
-
-      return [
+    ).map(
+      ([
         interval,
-        analyzedSnapshot
-      ];
-    });
+        rawSnapshot
+      ]) => {
+        const analyzedSnapshot =
+          addIndicators(
+            rawSnapshot
+          );
+
+        return [
+          interval,
+          analyzedSnapshot
+        ];
+      }
+    );
 
   const timeframes =
     Object.fromEntries(
@@ -191,13 +253,19 @@ async function buildAnalyzedMultiTimeframeSnapshot() {
     confirmInterval;
 
   const entrySnapshot =
-    timeframes[entryInterval];
+    timeframes[
+      entryInterval
+    ];
 
   const confirmSnapshot =
-    timeframes[confirmInterval];
+    timeframes[
+      confirmInterval
+    ];
 
   const trendSnapshot =
-    timeframes[trendInterval];
+    timeframes[
+      trendInterval
+    ];
 
   if (!entrySnapshot) {
     throw new Error(
@@ -218,18 +286,12 @@ async function buildAnalyzedMultiTimeframeSnapshot() {
   }
 
   /*
-   * Snapshot gửi sang AI.
-   *
-   * Có cả:
-   * - timeframes: dữ liệu đa khung
-   * - indicators: indicator khung entry
-   *
-   * Nhờ vậy ai.js cũ không bị lỗi ngay,
-   * nhưng để AI thực sự phân tích đa khung,
-   * ai.js vẫn cần đọc snapshot.timeframes.
+   * Snapshot đầy đủ gửi sang AI,
+   * executor và lưu DB.
    */
   return {
-    multiTimeframeEnabled: true,
+    multiTimeframeEnabled:
+      true,
 
     symbol:
       rawMulti.symbol ||
@@ -237,7 +299,9 @@ async function buildAnalyzedMultiTimeframeSnapshot() {
 
     intervals:
       rawMulti.intervals ||
-      Object.keys(timeframes),
+      Object.keys(
+        timeframes
+      ),
 
     entryInterval,
     confirmInterval,
@@ -250,7 +314,7 @@ async function buildAnalyzedMultiTimeframeSnapshot() {
     trendSnapshot,
 
     /*
-     * Tương thích với code một khung cũ.
+     * Tương thích code một khung cũ.
      */
     interval:
       entrySnapshot.interval,
@@ -284,12 +348,14 @@ async function buildAnalyzedMultiTimeframeSnapshot() {
 }
 
 /**
- * In thông tin các khung thời gian ra Render Logs.
+ * In thông tin các khung thời gian
+ * ra Render Logs.
  */
 function logTimeframes(
   multiSnapshot
 ) {
   console.log('');
+
   console.log(
     '===== MULTI TIMEFRAME ANALYSIS ====='
   );
@@ -326,7 +392,9 @@ function logTimeframes(
     }
 
     const summary =
-      summarizeTimeframe(snapshot);
+      summarizeTimeframe(
+        snapshot
+      );
 
     console.log(
       `${interval}:`,
@@ -358,14 +426,13 @@ function logTimeframes(
   console.log(
     '===================================='
   );
+
   console.log('');
 }
 
 /**
- * Chạy một vòng phân tích và xử lý lệnh.
- *
- * Telegram được gửi trong executor.js,
- * index.js không gửi Telegram lần thứ hai.
+ * Chạy một vòng phân tích
+ * và xử lý lệnh.
  */
 async function runOne() {
   /*
@@ -380,25 +447,21 @@ async function runOne() {
   /*
    * 2. In dữ liệu từng khung.
    */
-  logTimeframes(multiSnapshot);
+  logTimeframes(
+    multiSnapshot
+  );
 
   /*
-   * 3. Gửi toàn bộ dữ liệu đa khung sang AI.
-   *
-   * ai.js phải đọc:
-   * snapshot.timeframes
-   * snapshot.entryInterval
-   * snapshot.confirmInterval
-   * snapshot.trendInterval
+   * 3. Gửi snapshot đa khung sang AI.
    */
   const aiSignal =
-    await askAI(multiSnapshot);
+    await askAI(
+      multiSnapshot
+    );
 
   /*
-   * 4. Risk và sizing sử dụng khung entry.
-   *
-   * Ví dụ:
-   * Entry interval = 15m
+   * 4. Risk và sizing sử dụng
+   * snapshot khung Entry.
    */
   const decision =
     validateAndSize(
@@ -407,28 +470,36 @@ async function runOne() {
     );
 
   /*
-   * 5. Executor cũng dùng snapshot khung entry
-   * để lấy precision, spread và dữ liệu order.
+   * 5. Executor nhận toàn bộ
+   * multiSnapshot.
+   *
+   * Mục đích:
+   * - Lưu đầy đủ dữ liệu đa khung vào DB
+   * - Lưu context để đánh giá AI
+   * - Vẫn có contract, book, indicators
+   *   của khung Entry ở top-level
    */
   const execution =
     await executeDecision(
       decision,
-      entrySnapshot,
+      multiSnapshot,
       allowVstOrder
     );
 
   /*
-   * 6. Tóm tắt từng timeframe để lưu log.
+   * 6. Tóm tắt từng timeframe.
    */
   const timeframeReport =
     Object.fromEntries(
       multiSnapshot.intervals.map(
         interval => [
           interval,
+
           summarizeTimeframe(
-            multiSnapshot.timeframes?.[
-              interval
-            ]
+            multiSnapshot
+              .timeframes?.[
+                interval
+              ]
           )
         ]
       )
@@ -450,7 +521,8 @@ async function runOne() {
 
   const report = {
     createdAt:
-      new Date().toISOString(),
+      new Date()
+        .toISOString(),
 
     symbol:
       entrySnapshot.symbol,
@@ -472,7 +544,7 @@ async function runOne() {
       multiSnapshot.trendInterval,
 
     /*
-     * Giữ trường interval cũ.
+     * Giữ tương thích trường cũ.
      */
     interval:
       entrySnapshot.interval,
@@ -522,12 +594,14 @@ async function runOne() {
   };
 
   console.log('');
+
   console.log(
     '===== BINGX AI BOT ====='
   );
 
   console.log(
-    `Mode: ${CONFIG.executionMode} | Env: ${CONFIG.bingxEnv}`
+    `Mode: ${CONFIG.executionMode} | ` +
+    `Env: ${CONFIG.bingxEnv}`
   );
 
   console.log(
@@ -535,19 +609,29 @@ async function runOne() {
   );
 
   console.log(
-    `Timeframes: ${multiSnapshot.intervals.join(', ')}`
+    `Timeframes: ${
+      multiSnapshot
+        .intervals
+        .join(', ')
+    }`
   );
 
   console.log(
-    `Entry interval: ${multiSnapshot.entryInterval}`
+    `Entry interval: ${
+      multiSnapshot.entryInterval
+    }`
   );
 
   console.log(
-    `Confirm interval: ${multiSnapshot.confirmInterval}`
+    `Confirm interval: ${
+      multiSnapshot.confirmInterval
+    }`
   );
 
   console.log(
-    `Trend interval: ${multiSnapshot.trendInterval}`
+    `Trend interval: ${
+      multiSnapshot.trendInterval
+    }`
   );
 
   console.log(
@@ -560,14 +644,16 @@ async function runOne() {
 
   console.log(
     `Entry RSI: ${
-      report.rsi14?.toFixed?.(2) ??
+      report.rsi14
+        ?.toFixed?.(2) ??
       report.rsi14
     }`
   );
 
   console.log(
     `Entry ATR: ${
-      report.atr14?.toFixed?.(2) ??
+      report.atr14
+        ?.toFixed?.(2) ??
       report.atr14
     }`
   );
@@ -618,16 +704,23 @@ async function runOne() {
   );
 
   /*
-   * Các thông tin này chỉ xuất hiện
-   * trong Render Logs, không gửi lên Telegram.
+   * Chỉ xuất hiện trong Render Logs.
    */
   if (
-    execution?.executed === true
+    execution?.executed ===
+    true
   ) {
     console.log(
       execution.isDca
         ? 'Order type: DCA'
         : 'Order type: NEW ENTRY'
+    );
+
+    console.log(
+      `Trade DB ID: ${
+        execution.tradeId ||
+        'N/A'
+      }`
     );
 
     console.log(
@@ -652,11 +745,39 @@ async function runOne() {
     );
 
     console.log(
-      `Telegram message ID: ${
+      `Telegram FBT message ID: ${
+        execution.telegram
+          ?.fbt
+          ?.messageId ||
         execution.telegram
           ?.messageId ||
         'N/A'
       }`
+    );
+
+    console.log(
+      `Telegram CDT message ID: ${
+        execution.telegram
+          ?.cdt
+          ?.messageId ||
+        'N/A'
+      }`
+    );
+  }
+
+  if (
+    execution?.signalPublished ===
+    true
+  ) {
+    console.log(
+      `Signal trade DB ID: ${
+        execution.tradeId ||
+        'N/A'
+      }`
+    );
+
+    console.log(
+      'Signal Telegram: SENT'
     );
   }
 
@@ -664,13 +785,15 @@ async function runOne() {
     '========================\n'
   );
 
-  logJson(report);
+  logJson(
+    report
+  );
 
   return report;
 }
 
 /**
- * Không cho hai vòng chạy chồng lên nhau.
+ * Không cho hai vòng AI chạy chồng nhau.
  */
 async function runOnceSafe() {
   if (isRunning) {
@@ -678,7 +801,15 @@ async function runOnceSafe() {
       'Bot đang xử lý vòng trước, bỏ qua vòng này để tránh trùng lệnh...'
     );
 
-    return;
+    return null;
+  }
+
+  if (isShuttingDown) {
+    console.log(
+      'Bot đang tắt, không chạy vòng mới.'
+    );
+
+    return null;
   }
 
   isRunning = true;
@@ -686,6 +817,7 @@ async function runOnceSafe() {
 
   try {
     console.log('');
+
     console.log(
       '=============================='
     );
@@ -695,14 +827,25 @@ async function runOnceSafe() {
     );
 
     console.log(
-      `Time: ${new Date().toLocaleString('vi-VN')}`
+      `Time: ${
+        new Date()
+          .toLocaleString(
+            'vi-VN',
+            {
+              timeZone:
+                CONFIG
+                  .h4ReportTimezone ||
+                'Asia/Ho_Chi_Minh'
+            }
+          )
+      }`
     );
 
     console.log(
       '=============================='
     );
 
-    await runOne();
+    return await runOne();
   } catch (error) {
     const errorMessage =
       error.response?.data?.msg ||
@@ -718,7 +861,8 @@ async function runOnceSafe() {
 
     logJson({
       createdAt:
-        new Date().toISOString(),
+        new Date()
+          .toISOString(),
 
       error:
         errorMessage,
@@ -726,23 +870,118 @@ async function runOnceSafe() {
       stack:
         error.stack
     });
+
+    return null;
   } finally {
     isRunning = false;
   }
 }
 
 /**
+ * Khởi tạo cấu hình và PostgreSQL.
+ */
+async function initializeApplication() {
+  /*
+   * Kiểm tra config trước khi chạy.
+   */
+  assertSafeEnvironment();
+
+  console.log('');
+
+  console.log(
+    '===== APPLICATION INITIALIZATION ====='
+  );
+
+  console.log(
+    `Trade DB enabled: ${
+      CONFIG.tradeDbEnabled
+    }`
+  );
+
+  console.log(
+    `Trade monitor enabled: ${
+      CONFIG.tradeMonitorEnabled
+    }`
+  );
+
+  console.log(
+    `Database URL configured: ${
+      Boolean(
+        CONFIG.databaseUrl
+      )
+    }`
+  );
+
+  /*
+   * Tự kết nối và tạo bảng.
+   */
+  const databaseResult =
+    await initializeDatabase();
+
+  console.log(
+    'Database initialization:',
+    databaseResult
+  );
+
+  /*
+   * Trước vòng AI đầu tiên,
+   * kiểm tra các trade cũ xem đã
+   * TP1, TP2, SL hoặc hết hạn chưa.
+   *
+   * Việc này giúp Render restart xong
+   * không call lệnh mới trước khi
+   * cập nhật trade cũ.
+   */
+  if (
+    CONFIG.tradeMonitorEnabled &&
+    isDatabaseEnabled()
+  ) {
+    const monitorResult =
+      await runTradeMonitorOnce();
+
+    console.log(
+      'Initial trade monitor:',
+      {
+        skipped:
+          monitorResult?.skipped,
+
+        activeTrades:
+          monitorResult
+            ?.activeTrades,
+
+        reason:
+          monitorResult?.reason
+      }
+    );
+  }
+
+  console.log(
+    '======================================'
+  );
+
+  console.log('');
+
+  return databaseResult;
+}
+
+/**
  * Chạy bot liên tục.
  */
 async function startLoop() {
+  await initializeApplication();
+
   const checkIntervalSeconds =
-    Number(
-      CONFIG.checkIntervalSeconds ||
-      CONFIG.loopSeconds ||
-      300
+    Math.max(
+      10,
+      Number(
+        CONFIG.checkIntervalSeconds ||
+        CONFIG.loopSeconds ||
+        300
+      )
     );
 
   console.log('');
+
   console.log(
     '===== BINGX AI BOT LOOP STARTED ====='
   );
@@ -752,67 +991,287 @@ async function startLoop() {
   );
 
   console.log(
-    `Multi timeframe: ${CONFIG.multiTimeframeEnabled}`
+    `Multi timeframe: ${
+      CONFIG.multiTimeframeEnabled
+    }`
   );
 
   console.log(
-    `Intervals: ${(CONFIG.intervals || []).join(', ')}`
+    `Intervals: ${
+      (
+        CONFIG.intervals ||
+        []
+      ).join(', ')
+    }`
   );
 
   console.log(
-    `Entry interval: ${CONFIG.entryInterval}`
+    `Entry interval: ${
+      CONFIG.entryInterval
+    }`
   );
 
   console.log(
-    `Confirm interval: ${CONFIG.confirmInterval}`
+    `Confirm interval: ${
+      CONFIG.confirmInterval
+    }`
   );
 
   console.log(
-    `Trend interval: ${CONFIG.trendInterval}`
+    `Trend interval: ${
+      CONFIG.trendInterval
+    }`
   );
 
   console.log(
-    `Execution mode: ${CONFIG.executionMode}`
+    `Execution mode: ${
+      CONFIG.executionMode
+    }`
   );
 
   console.log(
-    `Environment: ${CONFIG.bingxEnv}`
+    `Environment: ${
+      CONFIG.bingxEnv
+    }`
   );
 
   console.log(
-    `Allow VST order: ${allowVstOrder}`
+    `Allow VST order: ${
+      allowVstOrder
+    }`
   );
 
   console.log(
-    `Check every: ${checkIntervalSeconds} seconds`
+    `Check every: ${
+      checkIntervalSeconds
+    } seconds`
   );
 
   console.log(
-    `Telegram enabled: ${CONFIG.telegramEnabled}`
+    `Telegram FBT enabled: ${
+      CONFIG.telegramEnabled
+    }`
+  );
+
+  console.log(
+    `Telegram CDT enabled: ${
+      CONFIG.cdtTelegramEnabled
+    }`
+  );
+
+  console.log(
+    `Trade DB enabled: ${
+      CONFIG.tradeDbEnabled
+    }`
+  );
+
+  console.log(
+    `Trade monitor enabled: ${
+      CONFIG.tradeMonitorEnabled
+    }`
+  );
+
+  console.log(
+    `Monitor every: ${
+      CONFIG
+        .tradeMonitorIntervalSeconds
+    } seconds`
+  );
+
+  console.log(
+    `Monitor candle: ${
+      CONFIG
+        .tradeMonitorCandleInterval
+    }`
   );
 
   console.log(
     '====================================='
   );
-  startH4ReportScheduler();
+
   /*
-   * Chạy ngay vòng đầu tiên.
+   * Khởi động monitor định kỳ.
+   */
+  startTradeMonitor();
+
+  /*
+   * Khởi động lịch đăng bài H4.
+   */
+  startH4ReportScheduler();
+
+  /*
+   * Chạy ngay vòng AI đầu tiên.
    */
   await runOnceSafe();
 
   /*
    * Sau đó tiếp tục theo chu kỳ.
    */
-  setInterval(
-    async () => {
-      await runOnceSafe();
-    },
-    checkIntervalSeconds * 1000
-  );
+  loopTimer =
+    setInterval(
+      async () => {
+        await runOnceSafe();
+      },
+      checkIntervalSeconds *
+      1000
+    );
 }
 
-if (args.has('--once')) {
-  await runOnceSafe();
-} else {
-  await startLoop();
+/**
+ * Chạy một lần rồi đóng DB.
+ */
+async function startOnce() {
+  try {
+    await initializeApplication();
+
+    await runOnceSafe();
+  } finally {
+    await closeDatabase();
+  }
+}
+
+/**
+ * Dừng bot an toàn khi Render restart,
+ * stop worker hoặc nhận Ctrl+C.
+ */
+async function gracefulShutdown(
+  signal
+) {
+  if (isShuttingDown) {
+    return;
+  }
+
+  isShuttingDown = true;
+
+  console.log('');
+
+  console.log(
+    `Nhận tín hiệu ${signal}. Đang dừng bot an toàn...`
+  );
+
+  if (loopTimer) {
+    clearInterval(
+      loopTimer
+    );
+
+    loopTimer = null;
+  }
+
+  stopTradeMonitor();
+
+  /*
+   * Chờ vòng AI hiện tại hoàn tất
+   * tối đa khoảng 30 giây.
+   */
+  const shutdownStartedAt =
+    Date.now();
+
+  while (
+    isRunning &&
+    (
+      Date.now() -
+      shutdownStartedAt
+    ) < 30000
+  ) {
+    await new Promise(
+      resolve =>
+        setTimeout(
+          resolve,
+          500
+        )
+    );
+  }
+
+  try {
+    await closeDatabase();
+  } catch (error) {
+    console.error(
+      'Đóng PostgreSQL lỗi:',
+      error.message ||
+      String(error)
+    );
+  }
+
+  console.log(
+    'Bot đã dừng an toàn.'
+  );
+
+  process.exit(0);
+}
+
+/**
+ * Render thường gửi SIGTERM
+ * khi deploy hoặc restart.
+ */
+process.once(
+  'SIGTERM',
+  () => {
+    void gracefulShutdown(
+      'SIGTERM'
+    );
+  }
+);
+
+process.once(
+  'SIGINT',
+  () => {
+    void gracefulShutdown(
+      'SIGINT'
+    );
+  }
+);
+
+/**
+ * Ghi log lỗi Promise chưa xử lý.
+ */
+process.on(
+  'unhandledRejection',
+  reason => {
+    console.error(
+      'Unhandled Promise Rejection:',
+      reason
+    );
+  }
+);
+
+/**
+ * Bắt đầu chương trình.
+ */
+try {
+  if (runOnceMode) {
+    await startOnce();
+  } else {
+    await startLoop();
+  }
+} catch (error) {
+  const errorMessage =
+    error.response?.data?.msg ||
+    error.response?.data?.message ||
+    error.response?.data ||
+    error.message ||
+    String(error);
+
+  console.error(
+    'Khởi động bot thất bại:',
+    errorMessage
+  );
+
+  console.error(
+    error.stack ||
+    ''
+  );
+
+  try {
+    stopTradeMonitor();
+
+    await closeDatabase();
+  } catch (closeError) {
+    console.error(
+      'Dọn dẹp tài nguyên lỗi:',
+      closeError.message ||
+      String(closeError)
+    );
+  }
+
+  process.exitCode = 1;
 }
