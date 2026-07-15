@@ -924,3 +924,442 @@ export async function sendTradeEventToTelegram(
 
   return result;
 }
+
+/**
+ * Chia báo cáo thành nhiều tin nhắn
+ * để không vượt giới hạn Telegram.
+ */
+function splitWeeklyReportMessage(
+  text,
+  maxLength = 3900
+) {
+  const content =
+    String(text || '')
+      .trim();
+
+  if (!content) {
+    return [];
+  }
+
+  if (
+    content.length <=
+    maxLength
+  ) {
+    return [
+      content
+    ];
+  }
+
+  const lines =
+    content.split('\n');
+
+  const chunks = [];
+  let currentChunk = '';
+
+  for (
+    const line of lines
+  ) {
+    const candidate =
+      currentChunk
+        ? `${currentChunk}\n${line}`
+        : line;
+
+    if (
+      candidate.length <=
+      maxLength
+    ) {
+      currentChunk =
+        candidate;
+
+      continue;
+    }
+
+    if (currentChunk) {
+      chunks.push(
+        currentChunk
+      );
+
+      currentChunk = '';
+    }
+
+    /*
+     * Trường hợp một dòng riêng lẻ
+     * vẫn dài hơn giới hạn Telegram.
+     */
+    if (
+      line.length >
+      maxLength
+    ) {
+      let remaining =
+        line;
+
+      while (
+        remaining.length >
+        maxLength
+      ) {
+        chunks.push(
+          remaining.slice(
+            0,
+            maxLength
+          )
+        );
+
+        remaining =
+          remaining.slice(
+            maxLength
+          );
+      }
+
+      currentChunk =
+        remaining;
+    } else {
+      currentChunk =
+        line;
+    }
+  }
+
+  if (currentChunk) {
+    chunks.push(
+      currentChunk
+    );
+  }
+
+  return chunks;
+}
+
+/**
+ * Gửi nhiều phần của báo cáo
+ * tới một group Telegram.
+ */
+async function sendWeeklyReportToTarget({
+  botToken,
+  chatId,
+  html,
+  targetName
+}) {
+  const chunks =
+    splitWeeklyReportMessage(
+      html
+    );
+
+  if (
+    chunks.length === 0
+  ) {
+    return {
+      sent: false,
+
+      target:
+        targetName,
+
+      reason:
+        'Nội dung báo cáo tuần đang trống'
+    };
+  }
+
+  const messageIds = [];
+
+  for (
+    let index = 0;
+    index < chunks.length;
+    index += 1
+  ) {
+    let text =
+      chunks[index];
+
+    /*
+     * Khi báo cáo bị chia thành
+     * nhiều phần, thêm số thứ tự.
+     */
+    if (
+      chunks.length > 1 &&
+      index > 0
+    ) {
+      text = [
+        `📊 <b>TỔNG KẾT TUẦN - PHẦN ${index + 1}/${chunks.length}</b>`,
+        '',
+        text
+      ].join('\n');
+    }
+
+    const result =
+      await postTelegramMessage({
+        botToken,
+        chatId,
+        text,
+        targetName
+      });
+
+    if (
+      result?.messageId
+    ) {
+      messageIds.push(
+        result.messageId
+      );
+    }
+  }
+
+  return {
+    sent: true,
+
+    target:
+      targetName,
+
+    chatId,
+
+    messageId:
+      messageIds[0] ||
+      null,
+
+    lastMessageId:
+      messageIds.at(-1) ||
+      null,
+
+    messageIds,
+
+    parts:
+      chunks.length
+  };
+}
+
+/**
+ * Gửi báo cáo tổng kết lệnh trong tuần
+ * tới FBT và CDT.
+ *
+ * report được tạo từ weeklyReporter.js:
+ *
+ * {
+ *   html,
+ *   totals,
+ *   startTime,
+ *   endTime
+ * }
+ */
+export async function sendWeeklyTradeReportToTelegram(
+  report
+) {
+  const html =
+    String(
+      report?.html || ''
+    ).trim();
+
+  if (!html) {
+    return {
+      sent: false,
+      messageId: null,
+      fbt: null,
+      cdt: null,
+      results: [],
+
+      reason:
+        'Báo cáo tuần không có nội dung'
+    };
+  }
+
+  const targets = [];
+
+  /**
+   * Gửi báo cáo vào FBT.
+   */
+  if (CONFIG.telegramEnabled) {
+    if (
+      !CONFIG.telegramBotToken ||
+      !CONFIG.telegramChatId
+    ) {
+      console.error(
+        'Weekly report FBT thiếu TELEGRAM_BOT_TOKEN hoặc TELEGRAM_CHAT_ID'
+      );
+    } else {
+      targets.push({
+        botToken:
+          CONFIG.telegramBotToken,
+
+        chatId:
+          CONFIG.telegramChatId,
+
+        html,
+
+        targetName:
+          'FBT'
+      });
+    }
+  }
+
+  /**
+   * Gửi báo cáo vào CDT.
+   */
+  if (
+    CONFIG.cdtTelegramEnabled
+  ) {
+    if (
+      !CONFIG.cdtTelegramBotToken ||
+      !CONFIG.cdtTelegramChatId
+    ) {
+      console.error(
+        'Weekly report CDT thiếu CDT_TELEGRAM_BOT_TOKEN hoặc CDT_TELEGRAM_CHAT_ID'
+      );
+    } else {
+      targets.push({
+        botToken:
+          CONFIG.cdtTelegramBotToken,
+
+        chatId:
+          CONFIG.cdtTelegramChatId,
+
+        html,
+
+        targetName:
+          'CDT'
+      });
+    }
+  }
+
+  if (
+    targets.length === 0
+  ) {
+    return {
+      sent: false,
+      messageId: null,
+      fbt: null,
+      cdt: null,
+      results: [],
+
+      reason:
+        'Không có Telegram FBT hoặc CDT nào được bật/cấu hình'
+    };
+  }
+
+  /*
+   * FBT và CDT gửi độc lập.
+   * Một group lỗi không ảnh hưởng group còn lại.
+   */
+  const settled =
+    await Promise.allSettled(
+      targets.map(
+        target =>
+          sendWeeklyReportToTarget(
+            target
+          )
+      )
+    );
+
+  const results =
+    settled.map(
+      (
+        item,
+        index
+      ) => {
+        const target =
+          targets[index]
+            .targetName;
+
+        if (
+          item.status ===
+          'fulfilled'
+        ) {
+          return {
+            ok: true,
+            target,
+            ...item.value
+          };
+        }
+
+        const errorMessage =
+          item.reason
+            ?.response
+            ?.data
+            ?.description ||
+          item.reason
+            ?.response
+            ?.data ||
+          item.reason
+            ?.message ||
+          String(
+            item.reason
+          );
+
+        return {
+          ok: false,
+
+          sent: false,
+
+          target,
+
+          error:
+            errorMessage
+        };
+      }
+    );
+
+  const successResults =
+    results.filter(
+      item =>
+        item.ok === true &&
+        item.sent === true
+    );
+
+  const failedResults =
+    results.filter(
+      item =>
+        item.ok !== true ||
+        item.sent !== true
+    );
+
+  const firstSuccess =
+    successResults[0];
+
+  const telegramResult = {
+    sent:
+      successResults.length > 0,
+
+    messageId:
+      firstSuccess
+        ?.messageId ||
+      null,
+
+    fbt:
+      results.find(
+        item =>
+          item.target ===
+          'FBT'
+      ) || null,
+
+    cdt:
+      results.find(
+        item =>
+          item.target ===
+          'CDT'
+      ) || null,
+
+    results
+  };
+
+  console.log(
+    'Kết quả gửi weekly report Telegram:',
+    {
+      sent:
+        telegramResult.sent,
+
+      success:
+        successResults.length,
+
+      failed:
+        failedResults.length,
+
+      totalTrades:
+        report?.totals
+          ?.allTrades,
+
+      resultTrades:
+        report?.totals
+          ?.resultTrades,
+
+      totalRoe:
+        report?.totals
+          ?.totalRoe,
+
+      results
+    }
+  );
+
+  return telegramResult;
+}
