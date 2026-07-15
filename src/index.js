@@ -44,6 +44,12 @@ import {
   runTradeMonitorOnce
 } from './tradeMonitor.js';
 
+import {
+  startWeeklyReportScheduler,
+  stopWeeklyReportScheduler,
+  runWeeklyReportOnce
+} from './weeklyReporter.js';
+
 const args =
   new Set(
     process.argv.slice(2)
@@ -54,6 +60,9 @@ const allowVstOrder =
 
 const runOnceMode =
   args.has('--once');
+
+const weeklyReportNowMode =
+  args.has('--weekly-report-now');
 
 let isRunning = false;
 let isShuttingDown = false;
@@ -905,6 +914,22 @@ async function initializeApplication() {
   );
 
   console.log(
+    `Weekly report enabled: ${
+      CONFIG.weeklyReportEnabled
+    }`
+  );
+
+  console.log(
+    `Weekly report schedule: ${
+      CONFIG.weeklyReportDay
+    } ${
+      CONFIG.weeklyReportTime
+    } ${
+      CONFIG.weeklyReportTimezone
+    }`
+  );
+
+  console.log(
     `Database URL configured: ${
       Boolean(
         CONFIG.databaseUrl
@@ -1086,6 +1111,22 @@ async function startLoop() {
   );
 
   console.log(
+    `Weekly report enabled: ${
+      CONFIG.weeklyReportEnabled
+    }`
+  );
+
+  console.log(
+    `Weekly report schedule: ${
+      CONFIG.weeklyReportDay
+    } ${
+      CONFIG.weeklyReportTime
+    } ${
+      CONFIG.weeklyReportTimezone
+    }`
+  );
+
+  console.log(
     '====================================='
   );
 
@@ -1098,6 +1139,11 @@ async function startLoop() {
    * Khởi động lịch đăng bài H4.
    */
   startH4ReportScheduler();
+
+  /*
+   * Khởi động lịch tổng kết lệnh tuần.
+   */
+  startWeeklyReportScheduler();
 
   /*
    * Chạy ngay vòng AI đầu tiên.
@@ -1131,6 +1177,69 @@ async function startOnce() {
 }
 
 /**
+ * Chạy thử report tuần ngay lập tức.
+ *
+ * Dùng để test Telegram và format:
+ *
+ * node src/index.js --weekly-report-now
+ */
+async function startWeeklyReportNow() {
+  try {
+    await initializeApplication();
+
+    const result =
+      await runWeeklyReportOnce({
+        now:
+          new Date(),
+
+        force:
+          true
+      });
+
+    console.log(
+      'Manual weekly report result:',
+      {
+        sent:
+          result?.sent === true,
+
+        skipped:
+          result?.skipped === true,
+
+        reason:
+          result?.reason,
+
+        totalTrades:
+          result?.report
+            ?.totals
+            ?.allTrades,
+
+        resultTrades:
+          result?.report
+            ?.totals
+            ?.resultTrades,
+
+        wins:
+          result?.report
+            ?.totals
+            ?.wins,
+
+        losses:
+          result?.report
+            ?.totals
+            ?.losses,
+
+        totalRoe:
+          result?.report
+            ?.totals
+            ?.totalRoe
+      }
+    );
+  } finally {
+    await closeDatabase();
+  }
+}
+
+/**
  * Dừng bot an toàn khi Render restart,
  * stop worker hoặc nhận Ctrl+C.
  */
@@ -1158,6 +1267,8 @@ async function gracefulShutdown(
   }
 
   stopTradeMonitor();
+
+  stopWeeklyReportScheduler();
 
   /*
    * Chờ vòng AI hiện tại hoàn tất
@@ -1238,7 +1349,9 @@ process.on(
  * Bắt đầu chương trình.
  */
 try {
-  if (runOnceMode) {
+  if (weeklyReportNowMode) {
+    await startWeeklyReportNow();
+  } else if (runOnceMode) {
     await startOnce();
   } else {
     await startLoop();
@@ -1263,6 +1376,8 @@ try {
 
   try {
     stopTradeMonitor();
+
+    stopWeeklyReportScheduler();
 
     await closeDatabase();
   } catch (closeError) {
