@@ -659,6 +659,46 @@ export const CONFIG = {
 
   /*
    * =========================
+   * WEEKLY TRADE REPORT
+   *
+   * Tổng kết lệnh trong tuần.
+   * Mặc định gửi tối thứ Bảy lúc 20:00.
+   * Dùng chung Telegram FBT/CDT Auto Trade.
+   * =========================
+   */
+  weeklyReportEnabled:
+    bool(
+      'WEEKLY_REPORT_ENABLED',
+      false
+    ),
+
+  weeklyReportDay:
+    choice(
+      'WEEKLY_REPORT_DAY',
+      [
+        'SUNDAY',
+        'MONDAY',
+        'TUESDAY',
+        'WEDNESDAY',
+        'THURSDAY',
+        'FRIDAY',
+        'SATURDAY'
+      ],
+      'SATURDAY'
+    ),
+
+  weeklyReportTime:
+    process.env
+      .WEEKLY_REPORT_TIME ||
+    '20:00',
+
+  weeklyReportTimezone:
+    process.env
+      .WEEKLY_REPORT_TIMEZONE ||
+    'Asia/Ho_Chi_Minh',
+
+  /*
+   * =========================
    * H4 REPORT
    *
    * Bộ token/chat ID này dùng riêng
@@ -723,6 +763,26 @@ export function assertSafeEnvironment() {
   ) {
     throw new Error(
       'TRADE_MONITOR_INTERVAL_SECONDS không nên nhỏ hơn 10 giây'
+    );
+  }
+
+  if (
+    CONFIG.weeklyReportEnabled &&
+    !CONFIG.tradeDbEnabled
+  ) {
+    throw new Error(
+      'WEEKLY_REPORT_ENABLED=true nhưng TRADE_DB_ENABLED=false'
+    );
+  }
+
+  if (
+    CONFIG.weeklyReportEnabled &&
+    !/^([01]\d|2[0-3]):[0-5]\d$/.test(
+      CONFIG.weeklyReportTime
+    )
+  ) {
+    throw new Error(
+      'WEEKLY_REPORT_TIME phải đúng định dạng HH:mm, ví dụ 20:00'
     );
   }
 
