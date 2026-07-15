@@ -1926,3 +1926,99 @@ export async function getTradeEvents(
     normalizeEventRow
   );
 }
+
+/**
+ * Lấy các lệnh phát sinh trong một khoảng thời gian.
+ *
+ * Dùng cho báo cáo tổng kết tuần.
+ *
+ * startTime:
+ * - Có tính thời điểm bắt đầu.
+ *
+ * endTime:
+ * - Không tính thời điểm kết thúc.
+ *
+ * Lệnh CANCELLED không đưa vào báo cáo.
+ */
+export async function getWeeklyTrades({
+  startTime,
+  endTime
+} = {}) {
+  if (!isTradeRepositoryEnabled()) {
+    return [];
+  }
+
+  const startDate =
+    startTime instanceof Date
+      ? startTime
+      : new Date(startTime);
+
+  const endDate =
+    endTime instanceof Date
+      ? endTime
+      : new Date(endTime);
+
+  if (
+    Number.isNaN(
+      startDate.getTime()
+    )
+  ) {
+    throw new Error(
+      'startTime báo cáo tuần không hợp lệ'
+    );
+  }
+
+  if (
+    Number.isNaN(
+      endDate.getTime()
+    )
+  ) {
+    throw new Error(
+      'endTime báo cáo tuần không hợp lệ'
+    );
+  }
+
+  if (
+    startDate.getTime() >=
+    endDate.getTime()
+  ) {
+    throw new Error(
+      'Thời gian bắt đầu báo cáo phải nhỏ hơn thời gian kết thúc'
+    );
+  }
+
+  const result =
+    await queryDatabase(
+      `
+        SELECT *
+        FROM ai_trades
+        WHERE COALESCE(
+          opened_at,
+          created_at
+        ) >= $1
+
+          AND COALESCE(
+            opened_at,
+            created_at
+          ) < $2
+
+          AND status <> 'CANCELLED'
+
+        ORDER BY
+          COALESCE(
+            opened_at,
+            created_at
+          ) ASC,
+
+          id ASC
+      `,
+      [
+        startDate.toISOString(),
+        endDate.toISOString()
+      ]
+    );
+
+  return result.rows.map(
+    normalizeTradeRow
+  );
+}
