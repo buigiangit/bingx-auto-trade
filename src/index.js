@@ -135,7 +135,19 @@ function summarizeTimeframe(snapshot) {
 /**
  * Tạo snapshot đa khung đã tính indicator.
  */
-async function buildAnalyzedMultiTimeframeSnapshot() {
+async function buildAnalyzedMultiTimeframeSnapshot(
+  symbol =
+    CONFIG.symbol
+) {
+  const activeSymbol =
+    String(
+      symbol ||
+      CONFIG.symbol ||
+      'BTC-USDT'
+    )
+      .trim()
+      .toUpperCase();
+
   /*
    * Nếu tắt multi timeframe,
    * bot vẫn chạy theo một khung.
@@ -144,7 +156,8 @@ async function buildAnalyzedMultiTimeframeSnapshot() {
     const raw =
       await buildMarketSnapshot(
         CONFIG.entryInterval ||
-        CONFIG.interval
+        CONFIG.interval,
+        activeSymbol
       );
 
     const entrySnapshot =
@@ -183,9 +196,6 @@ async function buildAnalyzedMultiTimeframeSnapshot() {
       trendSnapshot:
         entrySnapshot,
 
-      /*
-       * Tương thích code một khung cũ.
-       */
       interval:
         entrySnapshot.interval,
 
@@ -212,15 +222,11 @@ async function buildAnalyzedMultiTimeframeSnapshot() {
     };
   }
 
-  /*
-   * Lấy dữ liệu nến toàn bộ khung.
-   */
   const rawMulti =
-    await buildMultiTimeframeSnapshot();
+    await buildMultiTimeframeSnapshot(
+      activeSymbol
+    );
 
-  /*
-   * Tính indicator riêng từng khung.
-   */
   const analyzedTimeframeEntries =
     Object.entries(
       rawMulti.timeframes || {}
@@ -278,33 +284,29 @@ async function buildAnalyzedMultiTimeframeSnapshot() {
 
   if (!entrySnapshot) {
     throw new Error(
-      `Không có dữ liệu khung entry ${entryInterval}`
+      `Không có dữ liệu khung entry ${entryInterval} cho ${activeSymbol}`
     );
   }
 
   if (!confirmSnapshot) {
     throw new Error(
-      `Không có dữ liệu khung xác nhận ${confirmInterval}`
+      `Không có dữ liệu khung xác nhận ${confirmInterval} cho ${activeSymbol}`
     );
   }
 
   if (!trendSnapshot) {
     throw new Error(
-      `Không có dữ liệu khung xu hướng ${trendInterval}`
+      `Không có dữ liệu khung xu hướng ${trendInterval} cho ${activeSymbol}`
     );
   }
 
-  /*
-   * Snapshot đầy đủ gửi sang AI,
-   * executor và lưu DB.
-   */
   return {
     multiTimeframeEnabled:
       true,
 
     symbol:
       rawMulti.symbol ||
-      CONFIG.symbol,
+      activeSymbol,
 
     intervals:
       rawMulti.intervals ||
@@ -322,9 +324,6 @@ async function buildAnalyzedMultiTimeframeSnapshot() {
     confirmSnapshot,
     trendSnapshot,
 
-    /*
-     * Tương thích code một khung cũ.
-     */
     interval:
       entrySnapshot.interval,
 
@@ -355,7 +354,6 @@ async function buildAnalyzedMultiTimeframeSnapshot() {
       entrySnapshot.contract
   };
 }
-
 /**
  * In thông tin các khung thời gian
  * ra Render Logs.
