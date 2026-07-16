@@ -1,7 +1,13 @@
 import { CONFIG } from "./config.js";
 import { fetchSigned } from "./bingxClient.js";
-import { getSymbolState, updateSymbolState } from "./state.js";
-import { sendCommunitySignalToTelegram } from "./telegram.js";
+import {
+  getSymbolState,
+  updateSymbolState
+} from "./state.js";
+import {
+  sendCommunitySignalToTelegram
+} from "./telegram.js";
+
 import {
   isTradeRepositoryEnabled,
   getActiveTradeBySymbol,
@@ -9,32 +15,48 @@ import {
   updateTradeTelegramResult,
   recordTradeEvent,
   recordTradeDca,
-  markTradeCancelled,
+  markTradeCancelled
 } from "./tradeRepository.js";
 
 function getExecutionMode() {
-  return String(CONFIG.executionMode || "")
+  return String(
+    CONFIG.executionMode || ""
+  )
     .trim()
     .toUpperCase();
 }
 
 function getBingxEnv() {
-  return String(CONFIG.bingxEnv || "")
+  return String(
+    CONFIG.bingxEnv || ""
+  )
     .trim()
     .toLowerCase();
 }
 
-function toNumber(value, fallback = null) {
-  if (value === null || value === undefined || value === "") {
+function toNumber(
+  value,
+  fallback = null
+) {
+  if (
+    value === null ||
+    value === undefined ||
+    value === ""
+  ) {
     return fallback;
   }
 
-  const number = Number(value);
+  const number =
+    Number(value);
 
-  return Number.isFinite(number) ? number : fallback;
+  return Number.isFinite(number)
+    ? number
+    : fallback;
 }
 
-function hasBingxApiError(response) {
+function hasBingxApiError(
+  response
+) {
   return (
     response?.code !== undefined &&
     response?.code !== 0 &&
@@ -42,48 +64,83 @@ function hasBingxApiError(response) {
   );
 }
 
+/**
+ * Lấy symbol đang chạy từ snapshot.
+ *
+ * Quan trọng:
+ * Khi ENV SYMBOL có nhiều coin:
+ * SYMBOL=BTC-USDT,ETH-USDT,SOL-USDT
+ *
+ * Thì executor không được dùng nguyên chuỗi đó.
+ * Mỗi lần chạy phải lấy symbol cụ thể từ snapshot.
+ */
 function getSymbol(snapshot) {
-  return String(
-    snapshot?.symbol ||
-    CONFIG.symbol ||
-    ""
-  ).trim();
+  const raw =
+    String(
+      snapshot?.symbol ||
+      CONFIG.symbol ||
+      "BTC-USDT"
+    )
+      .trim()
+      .toUpperCase();
+
+  const firstSymbol =
+    raw
+      .split(",")
+      .map(item =>
+        item.trim()
+      )
+      .filter(Boolean)[0];
+
+  return firstSymbol ||
+    "BTC-USDT";
 }
 
 function getCurrentPrice(snapshot) {
-  const bidPrice = toNumber(
-    snapshot?.book?.bidPrice
-  );
+  const bidPrice =
+    toNumber(
+      snapshot?.book?.bidPrice
+    );
 
-  const askPrice = toNumber(
-    snapshot?.book?.askPrice
-  );
+  const askPrice =
+    toNumber(
+      snapshot?.book?.askPrice
+    );
 
-  if (bidPrice > 0 && askPrice > 0) {
-    return (bidPrice + askPrice) / 2;
+  if (
+    bidPrice > 0 &&
+    askPrice > 0
+  ) {
+    return (
+      bidPrice +
+      askPrice
+    ) / 2;
   }
 
-  const markPrice = toNumber(
-    snapshot?.premium?.markPrice
-  );
+  const markPrice =
+    toNumber(
+      snapshot?.premium?.markPrice
+    );
 
   if (markPrice > 0) {
     return markPrice;
   }
 
-  const lastClose = toNumber(
-    snapshot?.indicators?.lastClose
-  );
+  const lastClose =
+    toNumber(
+      snapshot?.indicators?.lastClose
+    );
 
   if (lastClose > 0) {
     return lastClose;
   }
 
-  const candles = Array.isArray(
-    snapshot?.candles
-  )
-    ? snapshot.candles
-    : [];
+  const candles =
+    Array.isArray(
+      snapshot?.candles
+    )
+      ? snapshot.candles
+      : [];
 
   return toNumber(
     candles.at(-1)?.close
@@ -91,21 +148,32 @@ function getCurrentPrice(snapshot) {
 }
 
 function sideFor(signal) {
-  const normalized = String(signal || "")
-    .trim()
-    .toUpperCase();
+  const normalized =
+    String(signal || "")
+      .trim()
+      .toUpperCase();
 
-  if (normalized === "LONG") {
+  if (
+    normalized === "LONG"
+  ) {
     return {
-      side: "BUY",
-      positionSide: "LONG",
+      side:
+        "BUY",
+
+      positionSide:
+        "LONG"
     };
   }
 
-  if (normalized === "SHORT") {
+  if (
+    normalized === "SHORT"
+  ) {
     return {
-      side: "SELL",
-      positionSide: "SHORT",
+      side:
+        "SELL",
+
+      positionSide:
+        "SHORT"
     };
   }
 
@@ -114,7 +182,10 @@ function sideFor(signal) {
   );
 }
 
-function clientOrderId(symbol, mode) {
+function clientOrderId(
+  symbol,
+  mode
+) {
   const prefix =
     mode === "USDT_ORDER"
       ? "ai-live"
@@ -122,33 +193,51 @@ function clientOrderId(symbol, mode) {
         ? "ai-vst"
         : "ai-test";
 
-  return `${prefix}-${String(symbol || "")
-    .replace("-", "")
-    .toLowerCase()}-${Date.now()}`.slice(0, 40);
+  return (
+    `${prefix}-` +
+    `${String(symbol || "")
+      .replace("-", "")
+      .toLowerCase()}-` +
+    `${Date.now()}`
+  ).slice(
+    0,
+    40
+  );
 }
 
-function roundPrice(value, precision = 2) {
-  const number = Number(value);
+function roundPrice(
+  value,
+  precision = 2
+) {
+  const number =
+    Number(value);
 
-  if (!Number.isFinite(number)) {
+  if (
+    !Number.isFinite(number)
+  ) {
     return null;
   }
 
-  const safePrecision = Math.max(
-    0,
-    Math.min(
-      12,
-      Number(precision) || 2
-    )
-  );
+  const safePrecision =
+    Math.max(
+      0,
+      Math.min(
+        12,
+        Number(precision) || 2
+      )
+    );
 
-  const multiplier = Math.pow(
-    10,
-    safePrecision
-  );
+  const multiplier =
+    Math.pow(
+      10,
+      safePrecision
+    );
 
   return (
-    Math.round(number * multiplier) /
+    Math.round(
+      number *
+      multiplier
+    ) /
     multiplier
   );
 }
@@ -160,30 +249,36 @@ function buildTpSlParams(
   const signal =
     decision?.signal || {};
 
-  const direction = String(
-    signal.signal || ""
-  )
-    .trim()
-    .toUpperCase();
+  const direction =
+    String(
+      signal.signal || ""
+    )
+      .trim()
+      .toUpperCase();
 
-  const pricePrecision = Number(
-    snapshot?.contract?.pricePrecision ?? 2
-  );
+  const pricePrecision =
+    Number(
+      snapshot?.contract?.pricePrecision ??
+      2
+    );
 
-  const entry = Number(
-    signal.entry1 ??
-    signal.entry
-  );
+  const entry =
+    Number(
+      signal.entry1 ??
+      signal.entry
+    );
 
-  const stopLoss = roundPrice(
-    signal.stopLoss,
-    pricePrecision
-  );
+  const stopLoss =
+    roundPrice(
+      signal.stopLoss,
+      pricePrecision
+    );
 
-  const takeProfit1 = roundPrice(
-    signal.takeProfit1,
-    pricePrecision
-  );
+  const takeProfit1 =
+    roundPrice(
+      signal.takeProfit1,
+      pricePrecision
+    );
 
   if (
     !Number.isFinite(entry) ||
@@ -246,7 +341,10 @@ function buildTpSlParams(
   }
 
   if (
-    !["LONG", "SHORT"].includes(direction)
+    ![
+      "LONG",
+      "SHORT"
+    ].includes(direction)
   ) {
     throw new Error(
       `Không thể tạo TP/SL cho signal: ${signal.signal}`
@@ -254,19 +352,35 @@ function buildTpSlParams(
   }
 
   return {
-    takeProfit: JSON.stringify({
-      type: "TAKE_PROFIT_MARKET",
-      stopPrice: takeProfit1,
-      price: takeProfit1,
-      workingType: "MARK_PRICE",
-    }),
+    takeProfit:
+      JSON.stringify({
+        type:
+          "TAKE_PROFIT_MARKET",
 
-    stopLoss: JSON.stringify({
-      type: "STOP_MARKET",
-      stopPrice: stopLoss,
-      price: stopLoss,
-      workingType: "MARK_PRICE",
-    }),
+        stopPrice:
+          takeProfit1,
+
+        price:
+          takeProfit1,
+
+        workingType:
+          "MARK_PRICE"
+      }),
+
+    stopLoss:
+      JSON.stringify({
+        type:
+          "STOP_MARKET",
+
+        stopPrice:
+          stopLoss,
+
+        price:
+          stopLoss,
+
+        workingType:
+          "MARK_PRICE"
+      })
   };
 }
 
@@ -274,11 +388,12 @@ async function setLeverageBeforeOrder(
   decision,
   symbol
 ) {
-  const leverage = Number(
-    decision?.leverage ||
-    CONFIG.maxLeverage ||
-    1
-  );
+  const leverage =
+    Number(
+      decision?.leverage ||
+      CONFIG.maxLeverage ||
+      1
+    );
 
   if (
     !Number.isFinite(leverage) ||
@@ -289,11 +404,12 @@ async function setLeverageBeforeOrder(
     );
   }
 
-  const direction = String(
-    decision?.signal?.signal || ""
-  )
-    .trim()
-    .toUpperCase();
+  const direction =
+    String(
+      decision?.signal?.signal || ""
+    )
+      .trim()
+      .toUpperCase();
 
   const side =
     direction === "LONG"
@@ -302,17 +418,22 @@ async function setLeverageBeforeOrder(
         ? "SHORT"
         : "ALL";
 
-  const response = await fetchSigned(
-    "POST",
-    "/openApi/swap/v2/trade/leverage",
-    {
-      symbol,
-      leverage,
-      side,
-    }
-  );
+  const response =
+    await fetchSigned(
+      "POST",
+      "/openApi/swap/v2/trade/leverage",
+      {
+        symbol,
+        leverage,
+        side
+      }
+    );
 
-  if (hasBingxApiError(response)) {
+  if (
+    hasBingxApiError(
+      response
+    )
+  ) {
     throw new Error(
       `Set leverage lỗi: ${
         response?.msg ||
@@ -325,16 +446,23 @@ async function setLeverageBeforeOrder(
   return response;
 }
 
-async function getOpenPosition(symbol) {
-  const response = await fetchSigned(
-    "GET",
-    "/openApi/swap/v2/user/positions",
-    {
-      symbol,
-    }
-  );
+async function getOpenPosition(
+  symbol
+) {
+  const response =
+    await fetchSigned(
+      "GET",
+      "/openApi/swap/v2/user/positions",
+      {
+        symbol
+      }
+    );
 
-  if (hasBingxApiError(response)) {
+  if (
+    hasBingxApiError(
+      response
+    )
+  ) {
     throw new Error(
       `Không lấy được vị thế BingX: ${
         response?.msg ||
@@ -354,63 +482,72 @@ async function getOpenPosition(symbol) {
           : [];
 
   const openedPosition =
-    positions.find(position => {
-      const quantity = Math.abs(
-        Number(
-          position.positionAmt ??
-          position.positionAmount ??
-          position.availableAmt ??
-          position.positionSize ??
-          position.quantity ??
-          0
-        )
-      );
+    positions.find(
+      position => {
+        const quantity =
+          Math.abs(
+            Number(
+              position.positionAmt ??
+              position.positionAmount ??
+              position.availableAmt ??
+              position.positionSize ??
+              position.quantity ??
+              0
+            )
+          );
 
-      return quantity > 0;
-    });
+        return quantity > 0;
+      }
+    );
 
   if (!openedPosition) {
     return null;
   }
 
-  const positionAmt = Number(
-    openedPosition.positionAmt ??
-    openedPosition.positionAmount ??
-    openedPosition.availableAmt ??
-    openedPosition.positionSize ??
-    openedPosition.quantity ??
-    0
-  );
+  const positionAmt =
+    Number(
+      openedPosition.positionAmt ??
+      openedPosition.positionAmount ??
+      openedPosition.availableAmt ??
+      openedPosition.positionSize ??
+      openedPosition.quantity ??
+      0
+    );
 
-  const avgPrice = Number(
-    openedPosition.avgPrice ??
-    openedPosition.averagePrice ??
-    openedPosition.entryPrice ??
-    0
-  );
+  const avgPrice =
+    Number(
+      openedPosition.avgPrice ??
+      openedPosition.averagePrice ??
+      openedPosition.entryPrice ??
+      0
+    );
 
-  const markPrice = Number(
-    openedPosition.markPrice ??
-    openedPosition.currentPrice ??
-    openedPosition.lastPrice ??
-    0
-  );
+  const markPrice =
+    Number(
+      openedPosition.markPrice ??
+      openedPosition.currentPrice ??
+      openedPosition.lastPrice ??
+      0
+    );
 
-  const unrealizedProfit = Number(
-    openedPosition.unrealizedProfit ??
-    openedPosition.unrealizedPnl ??
-    openedPosition.pnl ??
-    0
-  );
+  const unrealizedProfit =
+    Number(
+      openedPosition.unrealizedProfit ??
+      openedPosition.unrealizedPnl ??
+      openedPosition.pnl ??
+      0
+    );
 
-  const leverage = Number(
-    openedPosition.leverage ??
-    CONFIG.maxLeverage ??
-    1
-  );
+  const leverage =
+    Number(
+      openedPosition.leverage ??
+      CONFIG.maxLeverage ??
+      1
+    );
 
   const currentPrice =
-    markPrice || avgPrice;
+    markPrice ||
+    avgPrice;
 
   const notional =
     Math.abs(positionAmt) *
@@ -434,11 +571,12 @@ async function getOpenPosition(symbol) {
       openedPosition.symbol ||
       symbol,
 
-    positionSide: String(
-      openedPosition.positionSide || ""
-    )
-      .trim()
-      .toUpperCase(),
+    positionSide:
+      String(
+        openedPosition.positionSide || ""
+      )
+        .trim()
+        .toUpperCase(),
 
     positionAmt,
     avgPrice,
@@ -450,7 +588,7 @@ async function getOpenPosition(symbol) {
     roePct,
 
     raw:
-      openedPosition,
+      openedPosition
   };
 }
 
@@ -462,11 +600,14 @@ function isSameDirection(
     return false;
   }
 
-  const direction = String(signal || "")
-    .trim()
-    .toUpperCase();
+  const direction =
+    String(signal || "")
+      .trim()
+      .toUpperCase();
 
-  if (direction === "LONG") {
+  if (
+    direction === "LONG"
+  ) {
     return (
       openPosition.positionSide === "LONG" ||
       (
@@ -476,7 +617,9 @@ function isSameDirection(
     );
   }
 
-  if (direction === "SHORT") {
+  if (
+    direction === "SHORT"
+  ) {
     return (
       openPosition.positionSide === "SHORT" ||
       (
@@ -493,15 +636,21 @@ function checkEntry2Proximity(
   activeTrade,
   currentPrice
 ) {
-  const entry2 = toNumber(
-    activeTrade?.entry2
-  );
+  const entry2 =
+    toNumber(
+      activeTrade?.entry2
+    );
 
-  if (!entry2 || entry2 <= 0) {
+  if (
+    !entry2 ||
+    entry2 <= 0
+  ) {
     return {
-      allowed: false,
+      allowed:
+        false,
+
       reason:
-        "Trade active không có Entry 2 hợp lệ",
+        "Trade active không có Entry 2 hợp lệ"
     };
   }
 
@@ -510,48 +659,59 @@ function checkEntry2Proximity(
     currentPrice <= 0
   ) {
     return {
-      allowed: false,
+      allowed:
+        false,
+
       reason:
-        "Không xác định được giá hiện tại để kiểm tra DCA",
+        "Không xác định được giá hiện tại để kiểm tra DCA"
     };
   }
 
   const distancePct =
     (
       Math.abs(
-        currentPrice - entry2
+        currentPrice -
+        entry2
       ) /
       entry2
     ) * 100;
 
-  const tolerancePct = Math.max(
-    0,
-    Number(
-      CONFIG.dcaEntry2TolerancePct ||
-      0.15
-    )
-  );
+  const tolerancePct =
+    Math.max(
+      0,
+      Number(
+        CONFIG.dcaEntry2TolerancePct ||
+        0.15
+      )
+    );
 
-  if (distancePct > tolerancePct) {
+  if (
+    distancePct >
+    tolerancePct
+  ) {
     return {
-      allowed: false,
+      allowed:
+        false,
+
       distancePct,
       tolerancePct,
 
       reason:
         `Giá hiện tại chưa gần Entry 2. ` +
         `Lệch ${distancePct.toFixed(3)}%, ` +
-        `cho phép tối đa ${tolerancePct}%`,
+        `cho phép tối đa ${tolerancePct}%`
     };
   }
 
   return {
-    allowed: true,
+    allowed:
+      true,
+
     distancePct,
     tolerancePct,
 
     reason:
-      "Giá đang nằm gần Entry 2",
+      "Giá đang nằm gần Entry 2"
   };
 }
 
@@ -561,28 +721,32 @@ function buildDcaDecision(
   currentPrice,
   openPosition = null
 ) {
-  const dcaMarginUsdt = Number(
-    CONFIG.dcaMarginUsdt || 0
-  );
+  const dcaMarginUsdt =
+    Number(
+      CONFIG.dcaMarginUsdt || 0
+    );
 
-  const leverage = Number(
-    decision?.leverage ||
-    activeTrade?.leverage ||
-    CONFIG.maxLeverage ||
-    1
-  );
+  const leverage =
+    Number(
+      decision?.leverage ||
+      activeTrade?.leverage ||
+      CONFIG.maxLeverage ||
+      1
+    );
 
   const dcaNotional =
-    dcaMarginUsdt * leverage;
+    dcaMarginUsdt *
+    leverage;
 
-  const price = Number(
-    openPosition?.markPrice ||
-    currentPrice ||
-    openPosition?.avgPrice ||
-    activeTrade?.entry2 ||
-    activeTrade?.average_entry ||
-    activeTrade?.entry1
-  );
+  const price =
+    Number(
+      openPosition?.markPrice ||
+      currentPrice ||
+      openPosition?.avgPrice ||
+      activeTrade?.entry2 ||
+      activeTrade?.average_entry ||
+      activeTrade?.entry1
+    );
 
   if (
     !Number.isFinite(dcaNotional) ||
@@ -602,12 +766,13 @@ function buildDcaDecision(
     );
   }
 
-  const quantity = Number(
-    (
-      dcaNotional /
-      price
-    ).toFixed(8)
-  );
+  const quantity =
+    Number(
+      (
+        dcaNotional /
+        price
+      ).toFixed(8)
+    );
 
   if (
     !Number.isFinite(quantity) ||
@@ -626,12 +791,17 @@ function buildDcaDecision(
   return {
     ...decision,
 
-    isDca: true,
+    isDca:
+      true,
+
     quantity,
+
     notional:
       dcaNotional,
+
     marginUsed:
       dcaMarginUsdt,
+
     leverage,
 
     rr:
@@ -679,8 +849,8 @@ function buildDcaDecision(
 
       riskNote:
         `${decision.signal.riskNote || ""}` +
-        ` | DCA tại vùng Entry 2 của lệnh gốc`,
-    },
+        ` | DCA tại vùng Entry 2 của lệnh gốc`
+    }
   };
 }
 
@@ -690,26 +860,30 @@ async function evaluateActiveTrade(
   activeTrade,
   mode
 ) {
-  const signalDirection = String(
-    decision?.signal?.signal || ""
-  )
-    .trim()
-    .toUpperCase();
+  const signalDirection =
+    String(
+      decision?.signal?.signal || ""
+    )
+      .trim()
+      .toUpperCase();
 
   if (
     signalDirection !==
     activeTrade.direction
   ) {
     return {
-      action: "SKIP",
+      action:
+        "SKIP",
+
       decision,
       activeTrade,
-      openPosition: null,
+      openPosition:
+        null,
 
       message:
         `Đang có trade #${activeTrade.id} ` +
         `${activeTrade.direction} chưa TP2/SL. ` +
-        `Tín hiệu mới ${signalDirection} bị chặn.`,
+        `Tín hiệu mới ${signalDirection} bị chặn.`
     };
   }
 
@@ -717,54 +891,68 @@ async function evaluateActiveTrade(
     activeTrade.status === "TP1_HIT"
   ) {
     return {
-      action: "SKIP",
+      action:
+        "SKIP",
+
       decision,
       activeTrade,
-      openPosition: null,
+      openPosition:
+        null,
 
       message:
         `Trade #${activeTrade.id} đã đạt TP1 ` +
         `và đang chờ TP2 hoặc SL. ` +
-        `Không call mới và không DCA.`,
+        `Không call mới và không DCA.`
     };
   }
 
   if (!CONFIG.allowDca) {
     return {
-      action: "SKIP",
+      action:
+        "SKIP",
+
       decision,
       activeTrade,
-      openPosition: null,
+      openPosition:
+        null,
 
       message:
         `Đang có trade #${activeTrade.id} ` +
         `${activeTrade.direction} active. ` +
-        `DCA đang tắt nên không call thêm.`,
+        `DCA đang tắt nên không call thêm.`
     };
   }
 
-  const dcaCount = toNumber(
-    activeTrade.dca_count,
-    0
-  );
+  const dcaCount =
+    toNumber(
+      activeTrade.dca_count,
+      0
+    );
 
-  const maxDcaCount = Math.max(
-    0,
-    Number(
-      CONFIG.maxDcaCount || 0
-    )
-  );
+  const maxDcaCount =
+    Math.max(
+      0,
+      Number(
+        CONFIG.maxDcaCount || 0
+      )
+    );
 
-  if (dcaCount >= maxDcaCount) {
+  if (
+    dcaCount >=
+    maxDcaCount
+  ) {
     return {
-      action: "SKIP",
+      action:
+        "SKIP",
+
       decision,
       activeTrade,
-      openPosition: null,
+      openPosition:
+        null,
 
       message:
         `Trade #${activeTrade.id} đã DCA ` +
-        `${dcaCount}/${maxDcaCount} lần.`,
+        `${dcaCount}/${maxDcaCount} lần.`
     };
   }
 
@@ -777,7 +965,9 @@ async function evaluateActiveTrade(
 
   if (
     lastDcaAt &&
-    Number.isFinite(lastDcaAt)
+    Number.isFinite(
+      lastDcaAt
+    )
   ) {
     const elapsedSeconds =
       (
@@ -805,14 +995,17 @@ async function evaluateActiveTrade(
         );
 
       return {
-        action: "SKIP",
+        action:
+          "SKIP",
+
         decision,
         activeTrade,
-        openPosition: null,
+        openPosition:
+          null,
 
         message:
           `Trade #${activeTrade.id} đang cooldown DCA, ` +
-          `còn ${remainingSeconds} giây.`,
+          `còn ${remainingSeconds} giây.`
       };
     }
   }
@@ -826,22 +1019,29 @@ async function evaluateActiveTrade(
       currentPrice
     );
 
-  if (!entry2Check.allowed) {
+  if (
+    !entry2Check.allowed
+  ) {
     return {
-      action: "SKIP",
+      action:
+        "SKIP",
+
       decision,
       activeTrade,
-      openPosition: null,
+      openPosition:
+        null,
 
       message:
         `Trade #${activeTrade.id}: ` +
-        `${entry2Check.reason}`,
+        `${entry2Check.reason}`
     };
   }
 
   let openPosition = null;
 
-  if (mode !== "SIGNAL_ONLY") {
+  if (
+    mode !== "SIGNAL_ONLY"
+  ) {
     openPosition =
       await getOpenPosition(
         activeTrade.symbol
@@ -849,15 +1049,18 @@ async function evaluateActiveTrade(
 
     if (!openPosition) {
       return {
-        action: "SKIP",
+        action:
+          "SKIP",
+
         decision,
         activeTrade,
-        openPosition: null,
+        openPosition:
+          null,
 
         message:
           `DB đang có trade #${activeTrade.id} active ` +
           `nhưng BingX không có vị thế mở. ` +
-          `Bot không tạo lệnh mới để tránh spam.`,
+          `Bot không tạo lệnh mới để tránh spam.`
       };
     }
 
@@ -868,7 +1071,9 @@ async function evaluateActiveTrade(
       )
     ) {
       return {
-        action: "SKIP",
+        action:
+          "SKIP",
+
         decision,
         activeTrade,
         openPosition,
@@ -876,20 +1081,23 @@ async function evaluateActiveTrade(
         message:
           `Trade DB là ${activeTrade.direction} ` +
           `nhưng vị thế BingX khác hướng. ` +
-          `Không DCA tự động.`,
+          `Không DCA tự động.`
       };
     }
 
-    const dcaTriggerRoePct = Number(
-      CONFIG.dcaTriggerRoePct || 0
-    );
+    const dcaTriggerRoePct =
+      Number(
+        CONFIG.dcaTriggerRoePct || 0
+      );
 
     if (
       openPosition.roePct >
       dcaTriggerRoePct
     ) {
       return {
-        action: "SKIP",
+        action:
+          "SKIP",
+
         decision,
         activeTrade,
         openPosition,
@@ -897,13 +1105,14 @@ async function evaluateActiveTrade(
         message:
           `Trade #${activeTrade.id} đang active. ` +
           `ROE ${openPosition.roePct.toFixed(2)}% ` +
-          `chưa đạt ngưỡng DCA ${dcaTriggerRoePct}%.`,
+          `chưa đạt ngưỡng DCA ${dcaTriggerRoePct}%.`
       };
     }
   }
 
   return {
-    action: "DCA",
+    action:
+      "DCA",
 
     decision:
       buildDcaDecision(
@@ -919,7 +1128,7 @@ async function evaluateActiveTrade(
 
     message:
       `Cho phép DCA trade #${activeTrade.id} ` +
-      `tại vùng Entry 2.`,
+      `tại vùng Entry 2.`
   };
 }
 
@@ -954,13 +1163,15 @@ async function prepareDatabaseTradeAction(
           "EXECUTOR",
 
         executionMode:
-          mode,
+          mode
       }
     );
 
   if (!created.created) {
     return {
-      action: "SKIP",
+      action:
+        "SKIP",
+
       decision,
 
       trade:
@@ -969,29 +1180,34 @@ async function prepareDatabaseTradeAction(
       activeTrade:
         created.trade || null,
 
-      isNewTrade: false,
+      isNewTrade:
+        false,
 
       message:
         created.reason ||
-        "DB đã chặn vì có trade active",
+        "DB đã chặn vì có trade active"
     };
   }
 
   return {
-    action: "NEW_ENTRY",
+    action:
+      "NEW_ENTRY",
 
     decision: {
       ...decision,
-      isDca: false,
+
+      isDca:
+        false
     },
 
     trade:
       created.trade,
 
-    isNewTrade: true,
+    isNewTrade:
+      true,
 
     message:
-      `Đã tạo trade #${created.trade.id}`,
+      `Đã tạo trade #${created.trade.id}`
   };
 }
 
@@ -1000,21 +1216,31 @@ async function legacyPositionGuard(
   snapshot,
   mode
 ) {
-  if (mode === "SIGNAL_ONLY") {
+  if (
+    mode === "SIGNAL_ONLY"
+  ) {
     return {
-      action: "NEW_ENTRY",
+      action:
+        "NEW_ENTRY",
 
       decision: {
         ...decision,
-        isDca: false,
+
+        isDca:
+          false
       },
 
-      trade: null,
-      isNewTrade: false,
-      openPosition: null,
+      trade:
+        null,
+
+      isNewTrade:
+        false,
+
+      openPosition:
+        null,
 
       message:
-        "DB đang tắt nên không thể khóa call bằng lịch sử lâu dài.",
+        "DB đang tắt nên không thể khóa call bằng lịch sử lâu dài."
     };
   }
 
@@ -1022,29 +1248,47 @@ async function legacyPositionGuard(
     getSymbol(snapshot);
 
   const openPosition =
-    await getOpenPosition(symbol);
+    await getOpenPosition(
+      symbol
+    );
 
   if (!openPosition) {
     return {
-      action: "NEW_ENTRY",
+      action:
+        "NEW_ENTRY",
 
       decision: {
         ...decision,
-        isDca: false,
+
+        isDca:
+          false
       },
 
-      trade: null,
-      isNewTrade: false,
-      openPosition: null,
-      message: null,
+      trade:
+        null,
+
+      isNewTrade:
+        false,
+
+      openPosition:
+        null,
+
+      message:
+        null
     };
   }
 
   return {
-    action: "SKIP",
+    action:
+      "SKIP",
+
     decision,
-    trade: null,
-    isNewTrade: false,
+    trade:
+      null,
+
+    isNewTrade:
+      false,
+
     openPosition,
 
     message:
@@ -1052,7 +1296,7 @@ async function legacyPositionGuard(
         openPosition.positionSide ||
         "không rõ hướng"
       }. ` +
-      `Bật TRADE_DB_ENABLED=true để quản lý DCA và chống spam chính xác.`,
+      `Bật TRADE_DB_ENABLED=true để quản lý DCA và chống spam chính xác.`
   };
 }
 
@@ -1062,11 +1306,15 @@ function createNotExecutedResult(
   mode = getExecutionMode()
 ) {
   return {
-    executed: false,
-    isDca: false,
+    executed:
+      false,
+
+    isDca:
+      false,
+
     mode,
     reason,
-    ...extra,
+    ...extra
   };
 }
 
@@ -1096,12 +1344,16 @@ async function startCommunityTelegram(
       tradeId &&
       isTradeRepositoryEnabled()
     ) {
-      if (tradeContext?.isNewTrade) {
+      if (
+        tradeContext?.isNewTrade
+      ) {
         await updateTradeTelegramResult(
           tradeId,
           result
         );
-      } else if (decision.isDca) {
+      } else if (
+        decision.isDca
+      ) {
         await recordTradeEvent(
           tradeId,
           "DCA_SIGNAL_PUBLISHED",
@@ -1118,8 +1370,8 @@ async function startCommunityTelegram(
 
             metadata: {
               telegram:
-                result,
-            },
+                result
+            }
           }
         );
       }
@@ -1139,13 +1391,20 @@ async function startCommunityTelegram(
     );
 
     return {
-      sent: false,
-      messageId: null,
-      fbt: null,
-      cdt: null,
+      sent:
+        false,
+
+      messageId:
+        null,
+
+      fbt:
+        null,
+
+      cdt:
+        null,
 
       error:
-        errorMessage,
+        errorMessage
     };
   }
 }
@@ -1174,28 +1433,37 @@ function parseBingxOrderResponse(
     response?.status ||
     null;
 
-  if (!orderId && !status) {
+  if (
+    !orderId &&
+    !status
+  ) {
     throw new Error(
       `Không xác nhận được order response: ${JSON.stringify(response)}`
     );
   }
 
-  const executedQuantity = Number(
-    order?.executedQty ??
-    order?.quantity ??
-    decision.quantity
-  );
+  const executedQuantity =
+    Number(
+      order?.executedQty ??
+      order?.quantity ??
+      decision.quantity
+    );
 
-  const executedEntry = Number(
-    order?.avgPrice ??
-    order?.price ??
-    decision.signal.entry1 ??
-    decision.signal.entry
-  );
+  const executedEntry =
+    Number(
+      order?.avgPrice ??
+      order?.price ??
+      decision.signal.entry1 ??
+      decision.signal.entry
+    );
 
   const executedNotional =
-    Number.isFinite(executedQuantity) &&
-    Number.isFinite(executedEntry) &&
+    Number.isFinite(
+      executedQuantity
+    ) &&
+    Number.isFinite(
+      executedEntry
+    ) &&
     executedQuantity > 0 &&
     executedEntry > 0
       ? executedQuantity *
@@ -1222,7 +1490,7 @@ function parseBingxOrderResponse(
 
     positionSide:
       order?.positionSide ||
-      sideInfo.positionSide,
+      sideInfo.positionSide
   };
 }
 
@@ -1264,8 +1532,8 @@ async function persistSuccessfulDca(
           parsed.orderId,
 
         status:
-          parsed.status,
-      },
+          parsed.status
+      }
     }
   );
 }
@@ -1305,33 +1573,34 @@ async function executeBingxMarketOrder(
       symbol
     );
 
-    response = await fetchSigned(
-      "POST",
-      "/openApi/swap/v2/trade/order",
-      {
-        symbol,
+    response =
+      await fetchSigned(
+        "POST",
+        "/openApi/swap/v2/trade/order",
+        {
+          symbol,
 
-        side:
-          sideInfo.side,
+          side:
+            sideInfo.side,
 
-        positionSide:
-          sideInfo.positionSide,
+          positionSide:
+            sideInfo.positionSide,
 
-        type:
-          "MARKET",
+          type:
+            "MARKET",
 
-        quantity:
-          decision.quantity,
+          quantity:
+            decision.quantity,
 
-        clientOrderId:
-          clientOrderId(
-            symbol,
-            mode
-          ),
+          clientOrderId:
+            clientOrderId(
+              symbol,
+              mode
+            ),
 
-        ...tpSlParams,
-      }
-    );
+          ...tpSlParams
+        }
+      );
   } catch (error) {
     const telegramResult =
       await telegramPromise;
@@ -1374,8 +1643,8 @@ async function executeBingxMarketOrder(
             error:
               error.response?.data ||
               error.message ||
-              String(error),
-          },
+              String(error)
+          }
         }
       );
 
@@ -1396,7 +1665,11 @@ async function executeBingxMarketOrder(
   const telegramResult =
     await telegramPromise;
 
-  if (hasBingxApiError(response)) {
+  if (
+    hasBingxApiError(
+      response
+    )
+  ) {
     const bingxError =
       response?.msg ||
       response?.message ||
@@ -1437,8 +1710,8 @@ async function executeBingxMarketOrder(
             telegram:
               telegramResult,
 
-            bingxError,
-          },
+            bingxError
+          }
         }
       );
 
@@ -1475,7 +1748,9 @@ async function executeBingxMarketOrder(
     tradeId &&
     isTradeRepositoryEnabled()
   ) {
-    if (decision.isDca) {
+    if (
+      decision.isDca
+    ) {
       await persistSuccessfulDca(
         tradeContext,
         parsed,
@@ -1510,15 +1785,17 @@ async function executeBingxMarketOrder(
               parsed.side,
 
             positionSide:
-              parsed.positionSide,
-          },
+              parsed.positionSide
+          }
         }
       );
     }
   }
 
   const currentState =
-    getSymbolState(symbol);
+    getSymbolState(
+      symbol
+    );
 
   updateSymbolState(
     symbol,
@@ -1572,12 +1849,13 @@ async function executeBingxMarketOrder(
         decision.isDca
           ? Date.now()
           : currentState.lastDcaAt ||
-            null,
+            null
     }
   );
 
   return {
-    executed: true,
+    executed:
+      true,
 
     isDca:
       Boolean(
@@ -1667,7 +1945,7 @@ async function executeBingxMarketOrder(
       "",
 
     telegram:
-      telegramResult,
+      telegramResult
   };
 }
 
@@ -1676,6 +1954,9 @@ async function executeSignalOnly(
   snapshot,
   tradeContext
 ) {
+  const symbol =
+    getSymbol(snapshot);
+
   const telegramResult =
     await startCommunityTelegram(
       decision,
@@ -1724,14 +2005,15 @@ async function executeSignalOnly(
             "SIGNAL_ONLY",
 
           telegram:
-            telegramResult,
-        },
+            telegramResult
+        }
       }
     );
   }
 
   return {
-    executed: false,
+    executed:
+      false,
 
     signalPublished:
       telegramResult?.sent === true,
@@ -1744,6 +2026,7 @@ async function executeSignalOnly(
     mode:
       "SIGNAL_ONLY",
 
+    symbol,
     tradeId,
 
     reason:
@@ -1752,7 +2035,7 @@ async function executeSignalOnly(
         : `Đã xử lý tín hiệu cho trade #${tradeId}, không gửi order.`,
 
     telegram:
-      telegramResult,
+      telegramResult
   };
 }
 
@@ -1774,35 +2057,40 @@ async function executeTestOrder(
       snapshot
     );
 
-  const response = await fetchSigned(
-    "POST",
-    "/openApi/swap/v2/trade/order/test",
-    {
-      symbol,
+  const response =
+    await fetchSigned(
+      "POST",
+      "/openApi/swap/v2/trade/order/test",
+      {
+        symbol,
 
-      side:
-        sideInfo.side,
+        side:
+          sideInfo.side,
 
-      positionSide:
-        sideInfo.positionSide,
+        positionSide:
+          sideInfo.positionSide,
 
-      type:
-        "MARKET",
+        type:
+          "MARKET",
 
-      quantity:
-        decision.quantity,
+        quantity:
+          decision.quantity,
 
-      clientOrderId:
-        clientOrderId(
-          symbol,
-          "TEST_ORDER"
-        ),
+        clientOrderId:
+          clientOrderId(
+            symbol,
+            "TEST_ORDER"
+          ),
 
-      ...tpSlParams,
-    }
-  );
+        ...tpSlParams
+      }
+    );
 
-  if (hasBingxApiError(response)) {
+  if (
+    hasBingxApiError(
+      response
+    )
+  ) {
     throw new Error(
       `Gửi TEST_ORDER lỗi: ${
         response?.msg ||
@@ -1813,17 +2101,24 @@ async function executeTestOrder(
   }
 
   return {
-    executed: false,
-    testSent: true,
-    isDca: false,
+    executed:
+      false,
+
+    testSent:
+      true,
+
+    isDca:
+      false,
 
     mode:
       "TEST_ORDER",
 
+    symbol,
+
     reason:
       "Đã gửi test order, không tạo trade DB và không đăng Telegram.",
 
-    response,
+    response
   };
 }
 
@@ -1838,17 +2133,25 @@ export async function executeDecision(
   const bingxEnv =
     getBingxEnv();
 
+  const symbol =
+    getSymbol(snapshot);
+
   console.log(
     `Executor mode: ${mode} | ` +
-    `BingX env: ${bingxEnv}`
+    `BingX env: ${bingxEnv} | ` +
+    `Symbol: ${symbol}`
   );
 
-  if (!decision?.approved) {
+  if (
+    !decision?.approved
+  ) {
     return createNotExecutedResult(
       decision?.reasons?.length
         ? decision.reasons.join("; ")
         : "Decision không được duyệt",
-      {},
+      {
+        symbol
+      },
       mode
     );
   }
@@ -1857,27 +2160,39 @@ export async function executeDecision(
     "SIGNAL_ONLY",
     "TEST_ORDER",
     "VST_ORDER",
-    "USDT_ORDER",
+    "USDT_ORDER"
   ];
 
-  if (!supportedModes.includes(mode)) {
+  if (
+    !supportedModes.includes(
+      mode
+    )
+  ) {
     return createNotExecutedResult(
       `Execution mode không hỗ trợ: ${mode}`,
-      {},
+      {
+        symbol
+      },
       mode
     );
   }
 
-  if (mode === "VST_ORDER") {
+  if (
+    mode === "VST_ORDER"
+  ) {
     if (!allowVstOrder) {
       return createNotExecutedResult(
         "Thiếu flag --allow-vst-order",
-        {},
+        {
+          symbol
+        },
         mode
       );
     }
 
-    if (bingxEnv !== "prod-vst") {
+    if (
+      bingxEnv !== "prod-vst"
+    ) {
       return createNotExecutedResult(
         `VST_ORDER chỉ chạy khi ` +
         `BINGX_ENV=prod-vst. ` +
@@ -1885,7 +2200,9 @@ export async function executeDecision(
           bingxEnv ||
           "(trống)"
         }`,
-        {},
+        {
+          symbol
+        },
         mode
       );
     }
@@ -1902,12 +2219,16 @@ export async function executeDecision(
         bingxEnv ||
         "(trống)"
       }`,
-      {},
+      {
+        symbol
+      },
       mode
     );
   }
 
-  if (mode === "TEST_ORDER") {
+  if (
+    mode === "TEST_ORDER"
+  ) {
     return executeTestOrder(
       decision,
       snapshot
@@ -1939,6 +2260,8 @@ export async function executeDecision(
       tradeContext.message ||
       "Đang có trade active, không call thêm.",
       {
+        symbol,
+
         activeTrade:
           tradeContext.activeTrade ||
           tradeContext.trade ||
@@ -1946,7 +2269,7 @@ export async function executeDecision(
 
         openPosition:
           tradeContext.openPosition ||
-          null,
+          null
       },
       mode
     );
@@ -1965,7 +2288,9 @@ export async function executeDecision(
     );
   }
 
-  if (mode === "SIGNAL_ONLY") {
+  if (
+    mode === "SIGNAL_ONLY"
+  ) {
     return executeSignalOnly(
       decision,
       snapshot,
