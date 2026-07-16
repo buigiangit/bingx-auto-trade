@@ -804,16 +804,36 @@ export async function getCommonMarketData(
 /**
  * Chế độ một timeframe.
  */
+/**
+ * Chế độ tương thích code cũ.
+ *
+ * Có thể gọi:
+ *
+ * buildMarketSnapshot()
+ * buildMarketSnapshot('1h')
+ * buildMarketSnapshot('4h')
+ * buildMarketSnapshot('15m', 'ETH-USDT')
+ */
 export async function buildMarketSnapshot(
   interval =
     CONFIG.entryInterval ||
-    CONFIG.interval
+    CONFIG.interval,
+  symbol =
+    CONFIG.symbol
 ) {
+  const activeSymbol =
+    String(
+      symbol ||
+      CONFIG.symbol ||
+      'BTC-USDT'
+    )
+      .trim()
+      .toUpperCase();
+
   const normalizedInterval =
     normalizeInterval(
       interval,
-      CONFIG.interval ||
-      '15m'
+      CONFIG.interval || '15m'
     );
 
   const [
@@ -821,19 +841,19 @@ export async function buildMarketSnapshot(
     common
   ] = await Promise.all([
     getKlines(
-      CONFIG.symbol,
+      activeSymbol,
       normalizedInterval,
       CONFIG.limit
     ),
 
     getCommonMarketData(
-      CONFIG.symbol
+      activeSymbol
     )
   ]);
 
   return {
     symbol:
-      CONFIG.symbol,
+      activeSymbol,
 
     interval:
       normalizedInterval,
@@ -858,9 +878,21 @@ export async function buildMarketSnapshot(
 }
 
 /**
- * Xây dựng dữ liệu đa khung.
+ * Xây dựng dữ liệu đa khung cho một symbol.
  */
-export async function buildMultiTimeframeSnapshot() {
+export async function buildMultiTimeframeSnapshot(
+  symbol =
+    CONFIG.symbol
+) {
+  const activeSymbol =
+    String(
+      symbol ||
+      CONFIG.symbol ||
+      'BTC-USDT'
+    )
+      .trim()
+      .toUpperCase();
+
   const intervals =
     getConfiguredIntervals();
 
@@ -888,7 +920,7 @@ export async function buildMultiTimeframeSnapshot() {
         async interval => {
           const candles =
             await getKlines(
-              CONFIG.symbol,
+              activeSymbol,
               interval,
               CONFIG.limit
             );
@@ -902,7 +934,7 @@ export async function buildMultiTimeframeSnapshot() {
     ),
 
     getCommonMarketData(
-      CONFIG.symbol
+      activeSymbol
     )
   ]);
 
@@ -914,10 +946,9 @@ export async function buildMultiTimeframeSnapshot() {
           candles
         ]) => [
           interval,
-
           {
             symbol:
-              CONFIG.symbol,
+              activeSymbol,
 
             interval,
 
@@ -943,26 +974,21 @@ export async function buildMultiTimeframeSnapshot() {
     );
 
   const entrySnapshot =
-    timeframes[
-      entryInterval
-    ] ||
-    timeframes[
-      intervals[0]
-    ];
+    timeframes[entryInterval] ||
+    timeframes[intervals[0]];
 
   if (!entrySnapshot) {
     throw new Error(
-      `Không có dữ liệu khung entry ${entryInterval}`
+      `Không có dữ liệu khung entry ${entryInterval} cho ${activeSymbol}`
     );
   }
 
   return {
     symbol:
-      CONFIG.symbol,
+      activeSymbol,
 
     multiTimeframeEnabled:
-      CONFIG.multiTimeframeEnabled ===
-      true,
+      CONFIG.multiTimeframeEnabled === true,
 
     intervals,
 
@@ -989,11 +1015,6 @@ export async function buildMultiTimeframeSnapshot() {
     contract:
       common.contract,
 
-    /*
-     * Giữ khung Entry ở top-level
-     * để ai.js, index.js, executor.js
-     * tiếp tục sử dụng.
-     */
     interval:
       entrySnapshot.interval,
 
