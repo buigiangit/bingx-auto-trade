@@ -135,7 +135,39 @@ const multiTimeframeEnabled =
     'MULTI_TIMEFRAME_ENABLED',
     true
   );
+/**
+ * Đọc danh sách symbol.
+ *
+ * Ví dụ:
+ * SYMBOL=BTC-USDT,ETH-USDT,SOL-USDT
+ */
+function symbolList(
+  name,
+  defaultValue = 'BTC-USDT'
+) {
+  const raw =
+    process.env[name] ||
+    defaultValue;
 
+  return [
+    ...new Set(
+      String(raw)
+        .split(',')
+        .map(item =>
+          item
+            .trim()
+            .toUpperCase()
+        )
+        .filter(Boolean)
+    )
+  ];
+}
+
+const configuredSymbols =
+  symbolList(
+    'SYMBOL',
+    'BTC-USDT'
+  );
 export const CONFIG = {
   /*
    * =========================
@@ -292,9 +324,18 @@ export const CONFIG = {
     process.env.BINGX_ENV ||
     'prod-vst',
 
-  symbol:
-    process.env.SYMBOL ||
-    'BTC-USDT',
+symbols:
+  configuredSymbols,
+
+symbol:
+  configuredSymbols[0] ||
+  'BTC-USDT',
+
+symbolScanDelayMs:
+  num(
+    'SYMBOL_SCAN_DELAY_MS',
+    3000
+  ),
 
   /*
    * =========================
