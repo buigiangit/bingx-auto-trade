@@ -70,6 +70,61 @@ let runCount = 0;
 let loopTimer = null;
 
 /**
+ * Lấy danh sách symbol cần quét.
+ *
+ * Ưu tiên CONFIG.symbols nếu config.js đã hỗ trợ.
+ * Nếu chưa, tự tách từ CONFIG.symbol dạng:
+ * BTC-USDT,ETH-USDT,SOL-USDT
+ */
+function getScanSymbols() {
+  const fromConfigSymbols =
+    Array.isArray(CONFIG.symbols)
+      ? CONFIG.symbols
+      : [];
+
+  const rawSymbols =
+    fromConfigSymbols.length > 0
+      ? fromConfigSymbols
+      : String(
+          CONFIG.symbol ||
+          'BTC-USDT'
+        )
+          .split(',');
+
+  const symbols =
+    [
+      ...new Set(
+        rawSymbols
+          .map(item =>
+            String(item || '')
+              .trim()
+              .toUpperCase()
+          )
+          .filter(Boolean)
+      )
+    ];
+
+  return symbols.length > 0
+    ? symbols
+    : [
+        'BTC-USDT'
+      ];
+}
+
+/**
+ * Delay giữa mỗi symbol để tránh gọi API quá dồn.
+ */
+function sleep(ms) {
+  return new Promise(
+    resolve =>
+      setTimeout(
+        resolve,
+        ms
+      )
+  );
+}
+
+/**
  * Chuyển snapshot của một khung
  * thành dữ liệu log gọn.
  */
@@ -354,6 +409,7 @@ async function buildAnalyzedMultiTimeframeSnapshot(
       entrySnapshot.contract
   };
 }
+
 /**
  * In thông tin các khung thời gian
  * ra Render Logs.
@@ -439,14 +495,27 @@ function logTimeframes(
 
 /**
  * Chạy một vòng phân tích
- * và xử lý lệnh.
+ * và xử lý lệnh cho một symbol.
  */
-async function runOne() {
+async function runOneForSymbol(
+  symbol
+) {
+  const activeSymbol =
+    String(
+      symbol ||
+      CONFIG.symbol ||
+      'BTC-USDT'
+    )
+      .trim()
+      .toUpperCase();
+
   /*
    * 1. Lấy và phân tích dữ liệu đa khung.
    */
   const multiSnapshot =
-    await buildAnalyzedMultiTimeframeSnapshot();
+    await buildAnalyzedMultiTimeframeSnapshot(
+      activeSymbol
+    );
 
   const entrySnapshot =
     multiSnapshot.entrySnapshot;
@@ -800,6 +869,108 @@ async function runOne() {
 }
 
 /**
+ * Chạy một vòng cho toàn bộ danh sách coin.
+ */
+async function runOne() {
+  const symbols =
+    getScanSymbols();
+
+  const reports = [];
+
+  console.log('');
+
+  console.log(
+    '===== SYMBOL SCAN START ====='
+  );
+
+  console.log(
+    `Symbols: ${symbols.join(', ')}`
+  );
+
+  for (
+    let index = 0;
+    index < symbols.length;
+    index += 1
+  ) {
+    const symbol =
+      symbols[index];
+
+    console.log('');
+
+    console.log(
+      `===== SCAN SYMBOL ${index + 1}/${symbols.length}: ${symbol} =====`
+    );
+
+    try {
+      const report =
+        await runOneForSymbol(
+          symbol
+        );
+
+      reports.push(
+        report
+      );
+    } catch (error) {
+      const errorMessage =
+        error.response?.data?.msg ||
+        error.response?.data?.message ||
+        error.response?.data ||
+        error.message ||
+        String(error);
+
+      console.error(
+        `Lỗi khi phân tích ${symbol}:`,
+        errorMessage
+      );
+
+      logJson({
+        createdAt:
+          new Date()
+            .toISOString(),
+
+        symbol,
+
+        error:
+          errorMessage,
+
+        stack:
+          error.stack
+      });
+
+      reports.push({
+        symbol,
+
+        error:
+          errorMessage
+      });
+    }
+
+    if (
+      index <
+      symbols.length - 1
+    ) {
+      await sleep(
+        Math.max(
+          0,
+          Number(
+            CONFIG.symbolScanDelayMs ||
+            3000
+          )
+        )
+      );
+    }
+  }
+
+  console.log('');
+
+  console.log(
+    '===== SYMBOL SCAN DONE ====='
+  );
+
+  return reports;
+}
+
+/**
  * Không cho hai vòng AI chạy chồng nhau.
  */
 async function runOnceSafe() {
@@ -1010,7 +1181,7 @@ async function startLoop() {
   );
 
   console.log(
-    `Symbol: ${CONFIG.symbol}`
+    `Symbols: ${getScanSymbols().join(', ')}`
   );
 
   console.log(
